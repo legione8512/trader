@@ -1,0 +1,21 @@
+# Normalise line endings: LF in the repository, native in the working tree.
+# Prevents CRLF from Windows breaking shell scripts inside Linux containers.
+* text=auto eol=lf
+
+# Explicitly binary — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.zip binary
+*.gz binary
+*.parquet binary
+
+# Windows-only scripts must keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

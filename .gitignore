@@ -1,0 +1,121 @@
+# ---------------------------------------------------------------------------
+# SECRETS — never commit. Rotate immediately if one of these ever lands in Git.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+credentials/
+
+# ---------------------------------------------------------------------------
+# Local working documents (not part of the deliverable)
+# ---------------------------------------------------------------------------
+Info_Docs/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+# ---------------------------------------------------------------------------
+# Databases and data dumps
+# ---------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+pgdata/
+data/
+
+# ---------------------------------------------------------------------------
+# Market data caches and backtest artefacts (regenerable, often large)
+# ---------------------------------------------------------------------------
+market_data_cache/
+backtest_output/
+*.parquet
+*.feather
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+logs/
+*.log
+
+# ---------------------------------------------------------------------------
+# IDE / editor
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Claude Code local state
+# ---------------------------------------------------------------------------
+.claude/settings.local.json
