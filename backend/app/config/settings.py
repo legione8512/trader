@@ -10,6 +10,7 @@ from decimal import ROUND_DOWN, Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -65,8 +66,12 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = "http://localhost:5173"
 
     # ----------------------------------------------------------- database ---
+    #: One async driver for both the application and Alembic. Two URLs would
+    #: mean two places where the same password can diverge or leak.
     database_url: str = "postgresql+asyncpg://trader:CHANGE_ME@localhost:5432/trader"
-    database_url_sync: str = "postgresql+psycopg://trader:CHANGE_ME@localhost:5432/trader"
+    database_pool_size: int = Field(default=5, ge=1, le=50)
+    database_max_overflow: int = Field(default=5, ge=0, le=50)
+    database_connect_timeout_seconds: int = Field(default=10, ge=1, le=120)
 
     # ------------------------------------------------- trading identity ----
     reporting_currency: str = "RON"
@@ -193,7 +198,7 @@ class Settings(BaseSettings):
 
         problems: list[str] = []
 
-        if PLACEHOLDER_MARKER in self.database_url or PLACEHOLDER_MARKER in self.database_url_sync:
+        if PLACEHOLDER_MARKER in self.database_url:
             problems.append("DATABASE_URL still contains a placeholder password")
 
         if self.log_level == "DEBUG":
@@ -245,6 +250,20 @@ class Settings(BaseSettings):
         raw = self.bootstrap_reference_capital_ron * percent / Decimal(100)
         return raw.quantize(_CENT, rounding=ROUND_DOWN)
 
+    @property
+    def database_password(self) -> str | None:
+        """Password embedded in the database URL, if any.
+
+        Driver errors frequently quote the whole DSN, password included. That
+        text can end up in a log line or an error response, so the password is
+        treated as a secret like any API key.
+        """
+        try:
+            parsed = urlsplit(self.database_url)
+        except ValueError:
+            return None
+        return unquote(parsed.password) if parsed.password else None
+
     def secret_values(self) -> list[str]:
         """Every secret value currently configured, for the log masker.
 
@@ -258,7 +277,12 @@ class Settings(BaseSettings):
             self.binance_live_api_key,
             self.binance_live_api_secret,
         )
-        return [secret.get_secret_value() for secret in candidates if secret is not None]
+        values = [secret.get_secret_value() for secret in candidates if secret is not None]
+
+        password = self.database_password
+        if password is not None and password != PLACEHOLDER_MARKER:
+            values.append(password)
+        return values
 
 
 @lru_cache(maxsize=1)

@@ -159,7 +159,6 @@ class TestProductionHardening:
             make_settings(
                 app_env=AppEnvironment.PRODUCTION,
                 database_url="postgresql+asyncpg://trader:realpassword@db:5432/trader",
-                database_url_sync="postgresql+psycopg://trader:realpassword@db:5432/trader",
                 log_level="DEBUG",
             )
 
@@ -169,7 +168,6 @@ class TestProductionHardening:
         settings = make_settings(
             app_env=AppEnvironment.PRODUCTION,
             database_url="postgresql+asyncpg://trader:realpassword@db:5432/trader",
-            database_url_sync="postgresql+psycopg://trader:realpassword@db:5432/trader",
             log_level="INFO",
         )
         assert settings.app_env is AppEnvironment.PRODUCTION

@@ -17,8 +17,13 @@ from pydantic_settings import SettingsConfigDict
 
 from app.config.settings import Settings
 from app.core.secrets import secret_registry
-from app.domain.enums import AppEnvironment
+from app.domain.enums import AppEnvironment, HealthStatus
 from app.main import create_app
+from app.monitoring.health import HealthCheckResult
+
+#: A database that cannot possibly answer. Port 1 refuses immediately, so tests
+#: fail fast instead of waiting for a connection timeout.
+UNREACHABLE_DATABASE_URL = "postgresql+asyncpg://trader:unit-test-password@127.0.0.1:1/trader"
 
 
 class IsolatedSettings(Settings):
@@ -56,7 +61,10 @@ def make_settings() -> Callable[..., Settings]:
     """Factory producing isolated settings with test-friendly defaults."""
 
     def _factory(**overrides: Any) -> Settings:
-        values: dict[str, Any] = {"app_env": AppEnvironment.TEST}
+        values: dict[str, Any] = {
+            "app_env": AppEnvironment.TEST,
+            "database_url": UNREACHABLE_DATABASE_URL,
+        }
         values.update(overrides)
         return IsolatedSettings(**values)
 
@@ -75,5 +83,30 @@ def app(settings: Settings) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
+    """Client over the real application, whose database is unreachable.
+
+    Used to verify how the system behaves when the database is down.
+    """
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def healthy_client(app: FastAPI) -> Iterator[TestClient]:
+    """Client over an application whose database check is stubbed healthy.
+
+    Unit tests must not require a running PostgreSQL. Tests that exercise real
+    database behaviour are integration tests and are marked as such.
+    """
+
+    async def stub_database_check() -> HealthCheckResult:
+        return HealthCheckResult(
+            name="database",
+            status=HealthStatus.HEALTHY,
+            duration_ms=0.0,
+            detail="stubbed for unit tests",
+        )
+
+    app.state.health_registry.register("database", stub_database_check, replace=True)
     with TestClient(app) as test_client:
         yield test_client

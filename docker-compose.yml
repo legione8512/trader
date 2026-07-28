@@ -1,0 +1,52 @@
+# Local development stack.
+#
+# Start:      docker compose up --build
+# Migrate:    docker compose run --rm backend alembic upgrade head
+# Stop:       docker compose down
+# Wipe data:  docker compose down -v      (destroys the database volume)
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: trader-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
+      POSTGRES_DB: ${POSTGRES_DB:-trader}
+      # Deterministic collation. Sorting rules that differ between machines
+      # would make index behaviour and query results environment-dependent.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      # Exposed so local tools (psql, DBeaver, pgAdmin) can connect.
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The backend must not start against a database that is still booting.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader} -d ${POSTGRES_DB:-trader}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+    container_name: trader-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Overrides the .env value: inside the compose network the database host
+      # is the service name "db", not localhost.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-CHANGE_ME}@db:5432/${POSTGRES_DB:-trader}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
+    name: trader-pgdata

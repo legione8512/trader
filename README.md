@@ -86,8 +86,70 @@ Architecture: **modular monolith**. See
 
 ## Getting started
 
-Not runnable yet — the backend arrives in milestone 1.2 and the container
-stack in milestone 1.3. Setup instructions land here as they become real.
+### 1. Configuration
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set a real `POSTGRES_PASSWORD`. The same password must
+appear inside `DATABASE_URL`. `.env` is git-ignored — keep it that way.
+
+### 2. Run the whole stack in Docker
+
+```bash
+docker compose up --build
+```
+
+| Service | URL |
+|---------|-----|
+| Health endpoint | http://localhost:8000/api/health |
+| Interactive API docs | http://localhost:8000/docs |
+| PostgreSQL | localhost:5432 |
+
+### 3. Apply database migrations
+
+Migrations are **not** run automatically at startup. In an application that
+moves money, a schema change must be an explicit operator action, never a side
+effect of a restart.
+
+```bash
+docker compose run --rm backend alembic upgrade head
+```
+
+### 4. Run the backend without Docker
+
+Requires a PostgreSQL reachable at the `DATABASE_URL` in `.env`.
+
+```bash
+cd backend && python -m venv .venv && .venv/Scripts/python.exe -m pip install -e ".[dev]"
+```
+
+```bash
+cd backend && .venv/Scripts/python.exe -m uvicorn app.main:create_app --factory --reload
+```
+
+### 5. Checks
+
+```bash
+cd backend && .venv/Scripts/python.exe -m pytest
+```
+
+```bash
+cd backend && .venv/Scripts/python.exe -m ruff check . && .venv/Scripts/python.exe -m mypy
+```
+
+### Useful Docker commands
+
+```bash
+docker compose down
+```
+
+```bash
+docker compose down -v
+```
+
+The second one also destroys the database volume.
 
 ---
 

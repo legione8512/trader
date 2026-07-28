@@ -13,6 +13,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "structlog>=24.4",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
     # Windows ships no IANA timezone database. Without this, ZoneInfo cannot
     # resolve "Europe/Bucharest" and every trading-day boundary would be wrong.
     "tzdata>=2024.1",
@@ -67,6 +70,13 @@ ignore = [
 "tests/**" = [
     "S105",  # hardcoded password strings are fixtures here
     "S106",
+]
+"alembic/env.py" = [
+    "E402",  # alembic requires imports after context setup
+]
+"alembic/versions/**" = [
+    "E501",  # generated migrations may exceed the line length
+    "N999",  # generated file names are not module-style
 ]
 
 [tool.ruff.lint.isort]

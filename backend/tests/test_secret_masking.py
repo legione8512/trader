@@ -119,7 +119,9 @@ class TestSettingsIntegration:
             binance_paper_api_secret="paper-secret-abcdefghijklmnop",
         )
         registered = register_configured_secrets(settings.secret_values())
-        assert registered == 2
+        # Two API credentials plus the database password from the test DSN:
+        # driver errors quote the whole DSN, so that password is a secret too.
+        assert registered == 3
 
         masked = mask_mapping({"event": "using paper-key-abcdefghijklmnop"})
         assert "paper-key-abcdefghijklmnop" not in str(masked["event"])
@@ -127,7 +129,10 @@ class TestSettingsIntegration:
     def test_secret_values_returns_only_configured_secrets(
         self, make_settings: Callable[..., Settings]
     ) -> None:
-        assert make_settings().secret_values() == []
+        settings = make_settings(
+            database_url="postgresql+asyncpg://trader:CHANGE_ME@localhost:5432/trader"
+        )
+        assert settings.secret_values() == []
 
     def test_repr_of_settings_never_leaks_a_secret(
         self, make_settings: Callable[..., Settings]

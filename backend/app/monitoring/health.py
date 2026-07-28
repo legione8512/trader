@@ -1,8 +1,8 @@
 """Health check registry.
 
-Checks are registered rather than hard-coded so that later phases can add a
-database check, an exchange connectivity check and a market-data freshness
-check without touching the API layer.
+Checks are registered rather than hard-coded so that later phases can add
+exchange connectivity and market-data freshness checks without touching the API
+layer.
 """
 
 from __future__ import annotations
@@ -11,8 +11,11 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from app.config.settings import Settings
 from app.domain.enums import HealthStatus
+from app.persistence.database import ping
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +37,8 @@ class HealthRegistry:
     def __init__(self) -> None:
         self._checks: dict[str, HealthCheck] = {}
 
-    def register(self, name: str, check: HealthCheck) -> None:
-        if name in self._checks:
+    def register(self, name: str, check: HealthCheck, *, replace: bool = False) -> None:
+        if name in self._checks and not replace:
             raise ValueError(f"Health check already registered: {name}")
         self._checks[name] = check
 
@@ -63,27 +66,54 @@ class HealthRegistry:
                         name=name,
                         status=HealthStatus.UNHEALTHY,
                         duration_ms=round(elapsed_ms, 3),
-                        detail=f"{type(exc).__name__}: {exc}",
+                        # Only the exception TYPE, never its message. Driver
+                        # errors routinely quote the full DSN, password
+                        # included, and this value is returned over HTTP.
+                        detail=f"check raised {type(exc).__name__}",
                     )
                 )
         return results
 
 
-def build_default_registry(settings: Settings) -> HealthRegistry:
+def build_database_check(engine: AsyncEngine) -> HealthCheck:
+    """Create a check that verifies the database answers a trivial query."""
+
+    async def database_check() -> HealthCheckResult:
+        started = time.perf_counter()
+        try:
+            await ping(engine)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            return HealthCheckResult(
+                name="database",
+                status=HealthStatus.UNHEALTHY,
+                duration_ms=round(elapsed_ms, 3),
+                # See the note in run_all: type only, never the message.
+                detail=f"connection failed: {type(exc).__name__}",
+            )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return HealthCheckResult(
+            name="database",
+            status=HealthStatus.HEALTHY,
+            duration_ms=round(elapsed_ms, 3),
+            detail="connection ok",
+        )
+
+    return database_check
+
+
+def build_default_registry(settings: Settings, engine: AsyncEngine) -> HealthRegistry:
     """Create the registry with the checks available in Phase 1.
 
-    The database check arrives in milestone 1.3, the exchange and market-data
-    checks in Phase 3.
+    Exchange connectivity and market-data freshness checks arrive in Phase 3.
     """
     registry = HealthRegistry()
 
     async def application_check() -> HealthCheckResult:
-        started = time.perf_counter()
-        elapsed_ms = (time.perf_counter() - started) * 1000
         return HealthCheckResult(
             name="application",
             status=HealthStatus.HEALTHY,
-            duration_ms=round(elapsed_ms, 3),
+            duration_ms=0.0,
             detail="process is running",
         )
 
@@ -106,4 +136,5 @@ def build_default_registry(settings: Settings) -> HealthRegistry:
 
     registry.register("application", application_check)
     registry.register("configuration", configuration_check)
+    registry.register("database", build_database_check(engine))
     return registry
