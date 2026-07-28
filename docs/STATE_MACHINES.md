@@ -3,6 +3,23 @@
 Six state machines govern the system. Every transition is persisted as an
 audit event; no state ever changes silently.
 
+The transitions below are the ones implemented in
+`backend/app/domain/state_machines.py`. They are kept in sync by tests that
+assert graph properties over every machine.
+
+**Self-transitions do not exist.** A session that evaluates an opportunity and
+decides `NO_TRADE` has not changed state, so it performs no transition. The
+Phase 0 diagrams drew such loops for readability; the model does not.
+
+## Changes since the Phase 0 draft
+
+| Machine | Change | Reason |
+|---------|--------|--------|
+| Order | Added `ACCEPTED -> UNKNOWN` and `PARTIALLY_FILLED -> UNKNOWN` | A cancel or amend request can time out exactly like a submit. Without these edges, a cancel timeout would have no legal state to move to, and the code would be forced to lie about what it knows. |
+| SystemHealth | Added `HEALTHY -> UNHEALTHY` | A hard failure, such as the database disappearing, must not be reported as a mere warning for one cycle while it passes through `DEGRADED`. |
+| TradingDay | Added `TRADING_SUSPENDED -> MANUALLY_STOPPED` and `-> TECHNICAL_FAILURE` | The operator must be able to stop a suspended day, and a suspended day can still fail unrecoverably. |
+| Position | Added `CLOSING -> DESYNCED` | A mismatch can be discovered while closing, not only while open. |
+
 ---
 
 ## 1. TradingDay
@@ -22,6 +39,8 @@ stateDiagram-v2
     ACTIVE --> CLOSED: day boundary, no trades (NO_TRADE day)
 
     TRADING_SUSPENDED --> ACTIVE: health restored
+    TRADING_SUSPENDED --> MANUALLY_STOPPED: operator emergency stop
+    TRADING_SUSPENDED --> TECHNICAL_FAILURE: unrecoverable error
     TRADING_SUSPENDED --> CLOSED: day boundary
 
     DAILY_TARGET_REACHED --> CLOSED
@@ -113,17 +132,22 @@ stateDiagram-v2
     UNKNOWN --> RECONCILING: MANDATORY - never a blind retry
     RECONCILING --> ACCEPTED
     RECONCILING --> REJECTED
+    RECONCILING --> PARTIALLY_FILLED
     RECONCILING --> FILLED
     RECONCILING --> CANCELED
+    RECONCILING --> EXPIRED
     RECONCILING --> UNRESOLVED: escalate and suspend trading
 
     ACCEPTED --> PARTIALLY_FILLED
     ACCEPTED --> FILLED
     ACCEPTED --> CANCELED
     ACCEPTED --> EXPIRED
+    ACCEPTED --> UNKNOWN: cancel or amend timed out
 
     PARTIALLY_FILLED --> FILLED
     PARTIALLY_FILLED --> CANCELED
+    PARTIALLY_FILLED --> EXPIRED
+    PARTIALLY_FILLED --> UNKNOWN: cancel or amend timed out
 
     FILLED --> [*]
     CANCELED --> [*]
@@ -154,6 +178,7 @@ stateDiagram-v2
     OPEN --> DESYNCED: exchange balance mismatch
 
     CLOSING --> CLOSED
+    CLOSING --> DESYNCED: mismatch found while closing
 
     DESYNCED --> OPEN: reconciled as still open
     DESYNCED --> CLOSED: reconciled as closed
@@ -175,6 +200,7 @@ stateDiagram-v2
     STARTING --> UNHEALTHY: a check fails
 
     HEALTHY --> DEGRADED: stale data / WebSocket reconnect /<br/>rate limit / clock drift
+    HEALTHY --> UNHEALTHY: hard failure, e.g. database lost
     DEGRADED --> HEALTHY: recovered and validated
     DEGRADED --> UNHEALTHY: threshold exceeded
 
