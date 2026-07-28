@@ -1,0 +1,113 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trader-backend"
+version = "0.1.0"
+description = "Automated cryptocurrency spot trading application - backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    # Windows ships no IANA timezone database. Without this, ZoneInfo cannot
+    # resolve "Europe/Bucharest" and every trading-day boundary would be wrong.
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    # Required by starlette's TestClient in current versions.
+    "httpx2>=2.9",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Ruff - linter and formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort - import ordering
+    "N",      # pep8-naming
+    "UP",     # pyupgrade - modern syntax
+    "B",      # flake8-bugbear - likely bugs
+    "A",      # flake8-builtins - shadowed builtins
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez - naive datetimes are forbidden
+    "T20",    # flake8-print - no stray print()
+    "SIM",    # flake8-simplify
+    "PTH",    # prefer pathlib
+    "RUF",    # ruff-specific rules
+    "S",      # flake8-bandit - security
+    "ASYNC",  # flake8-async
+]
+ignore = [
+    "S101",  # assert is expected in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S105",  # hardcoded password strings are fixtures here
+    "S106",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection intentionally calls these in argument
+# defaults. B008 is a false positive for them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Security",
+]
+
+# ---------------------------------------------------------------------------
+# mypy - static type checking, strict
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_no_return = true
+show_error_codes = true
+pretty = true
+plugins = ["pydantic.mypy"]
+files = ["app", "tests"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
