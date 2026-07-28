@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to the same branch cancels the previous run: no point burning
+# minutes on a commit that has already been superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 matches the Dockerfile. The container is the source of truth.
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      - name: mypy (strict)
+        run: mypy
+
+      - name: pytest
+        run: pytest -q
+
+  frontend:
+    name: Frontend (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # ci, not install: it installs exactly the locked versions and fails if
+        # package.json and package-lock.json disagree.
+        run: npm ci
+
+      - name: oxlint
+        run: npm run lint
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  secret-hygiene:
+    name: Secret hygiene
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret removed from HEAD is still a leaked secret.
+          fetch-depth: 0
+
+      - name: .env must not be tracked
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env is tracked by Git. Remove it and rotate every credential it contained."
+            exit 1
+          fi
+          echo ".env is not tracked."
+
+      - name: .env must never have entered history
+        run: |
+          if git log --all --pretty=format: --name-only --diff-filter=A \
+             | sort -u | grep -qx '.env'; then
+            echo "::error::.env appears in Git history. Rotate every credential and rewrite history."
+            exit 1
+          fi
+          echo ".env is absent from history."
+
+      - name: .env.example must contain placeholders only
+        run: |
+          if grep -nE '^(BINANCE_[A-Z_]*API_(KEY|SECRET))=.+' .env.example; then
+            echo "::error::.env.example contains a non-empty credential."
+            exit 1
+          fi
+          if grep -nE '^LIVE_TRADING_CONFIRMATION_PHRASE=.+' .env.example; then
+            echo "::error::.env.example must not pre-fill the live confirmation phrase."
+            exit 1
+          fi
+          echo ".env.example contains placeholders only."
+
+  dependency-audit:
+    name: Dependency audit (advisory)
+    runs-on: ubuntu-latest
+    # Advisory only. A new CVE published upstream should be visible immediately,
+    # but it must not block a pull request that did not cause it.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit --audit-level=high

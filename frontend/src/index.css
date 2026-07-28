@@ -1,0 +1,240 @@
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-raised: #1e222b;
+  --border: #2a2f3a;
+  --text: #e6e9ef;
+  --text-muted: #9aa3b2;
+
+  --healthy: #3fb950;
+  --degraded: #d29922;
+  --unhealthy: #f85149;
+  --starting: #6e7681;
+  --live: #f85149;
+
+  --radius: 8px;
+  --mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-raised: #f0f2f5;
+    --border: #d8dce3;
+    --text: #1a1d23;
+    --text-muted: #5a6472;
+
+    --healthy: #1a7f37;
+    --degraded: #9a6700;
+    --unhealthy: #cf222e;
+    --starting: #6e7681;
+    --live: #cf222e;
+
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- layout --- */
+
+.dashboard {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+.dashboard__title {
+  margin: 0 0 1.25rem;
+  font-size: 1.5rem;
+  letter-spacing: 0.02em;
+}
+
+.dashboard__message {
+  color: var(--text-muted);
+}
+
+/* -------------------------------------------------------- mode banner --- */
+
+.mode-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.mode-banner__label {
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.mode-banner__description {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.mode-banner--live {
+  border-color: var(--live);
+  background: color-mix(in srgb, var(--live) 14%, var(--surface));
+}
+
+.mode-banner--live .mode-banner__label,
+.mode-banner--live .mode-banner__description {
+  color: var(--live);
+}
+
+.mode-banner__warning {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--live);
+}
+
+/* -------------------------------------------------------------- panel --- */
+
+.panel {
+  padding: 1rem 1.25rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.panel--error {
+  border-color: var(--unhealthy);
+}
+
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.panel__notice {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--degraded);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+/* ------------------------------------------------------------- checks --- */
+
+.checks {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.checks th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+
+.checks td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.checks__name {
+  font-family: var(--mono);
+}
+
+.checks__duration {
+  font-family: var(--mono);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.checks__detail {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  word-break: break-word;
+}
+
+/* ------------------------------------------------------- status badge --- */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-badge--healthy {
+  color: var(--healthy);
+}
+.status-badge--degraded {
+  color: var(--degraded);
+}
+.status-badge--unhealthy {
+  color: var(--unhealthy);
+}
+.status-badge--starting {
+  color: var(--starting);
+}
+
+/* --------------------------------------------------------------- meta --- */
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 1rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.meta dt {
+  color: var(--text-muted);
+}
+
+.meta dd {
+  margin: 0;
+  font-family: var(--mono);
+}

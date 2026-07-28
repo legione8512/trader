@@ -54,7 +54,7 @@ risk.
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Requirements finalisation | Done |
-| 1 | Repository and local environment | In progress |
+| 1 | Repository and local environment | Done |
 | 2 | Domain model and persistence | Not started |
 | 3 | Public Binance market data | Not started |
 | 4 | Strategy research framework | Not started |
@@ -117,7 +117,26 @@ effect of a restart.
 docker compose run --rm backend alembic upgrade head
 ```
 
-### 4. Run the backend without Docker
+### 4. Run the frontend
+
+The frontend runs on the host, not in a container. Vite's hot module
+replacement loses most of its speed through a Windows bind mount into a Linux
+container, for no benefit during development. The production frontend image
+arrives in Phase 12, together with the reverse proxy and HTTPS.
+
+```bash
+cd frontend && npm install
+```
+
+```bash
+cd frontend && npm run dev
+```
+
+Open http://localhost:5173. Vite proxies `/api` to the backend on port 8000, so
+there is no CORS configuration to maintain in development and the production
+deployment can serve both from a single origin without any code change.
+
+### 5. Run the backend without Docker
 
 Requires a PostgreSQL reachable at the `DATABASE_URL` in `.env`.
 
@@ -129,7 +148,7 @@ cd backend && python -m venv .venv && .venv/Scripts/python.exe -m pip install -e
 cd backend && .venv/Scripts/python.exe -m uvicorn app.main:create_app --factory --reload
 ```
 
-### 5. Checks
+### 6. Checks
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest
@@ -138,6 +157,13 @@ cd backend && .venv/Scripts/python.exe -m pytest
 ```bash
 cd backend && .venv/Scripts/python.exe -m ruff check . && .venv/Scripts/python.exe -m mypy
 ```
+
+```bash
+cd frontend && npm run lint && npm run typecheck && npm test
+```
+
+CI runs all of these on every push and pull request, plus a secret-hygiene job
+that fails the build if `.env` is ever tracked or appears anywhere in history.
 
 ### Useful Docker commands
 
