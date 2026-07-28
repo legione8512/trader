@@ -121,3 +121,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
 filterwarnings = ["error"]
+markers = [
+    # Requires a real PostgreSQL. Run offline with: pytest -m "not integration"
+    "integration: test that needs a live database",
+]

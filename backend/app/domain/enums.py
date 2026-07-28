@@ -231,6 +231,38 @@ class RiskVerdict(StrEnum):
     REJECTED = "REJECTED"
 
 
+class DailyPnlBasis(StrEnum):
+    """Which P&L the daily loss limit is evaluated against (rule R-26).
+
+    Phase 0 decision OD-06 selected the conservative basis: an open position
+    sitting at -41 RON stops the day immediately, without waiting for it to
+    close.
+    """
+
+    REALISED_ONLY = "REALISED_ONLY"
+    REALISED_PLUS_UNREALISED = "REALISED_PLUS_UNREALISED"
+
+
+class EventSeverity(StrEnum):
+    """Severity of a technical system event."""
+
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class AuditActor(StrEnum):
+    """Who caused an audited action."""
+
+    SYSTEM = "SYSTEM"
+    OPERATOR = "OPERATOR"
+    STRATEGY = "STRATEGY"
+    RISK_ENGINE = "RISK_ENGINE"
+    EXCHANGE = "EXCHANGE"
+    SCHEDULER = "SCHEDULER"
+
+
 class TradingOutcome(StrEnum):
     """Reportable outcome of a trading day or evaluation cycle.
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import Numeric
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
@@ -17,6 +18,7 @@ from sqlalchemy.pool import QueuePool
 from app.config.settings import Settings
 from app.domain.enums import HealthStatus
 from app.monitoring.health import build_database_check
+from app.persistence import models as _models  # noqa: F401  (registers every table)
 from app.persistence.base import NAMING_CONVENTION, Base
 from app.persistence.database import build_engine, build_session_factory, ping
 
@@ -79,9 +81,33 @@ class TestNamingConvention:
         """Constraint names must be a pure function of the model."""
         assert Base.metadata.naming_convention == NAMING_CONVENTION
 
-    def test_no_models_are_registered_yet(self) -> None:
-        """Phase 1 defines infrastructure only; the schema arrives in Phase 2."""
-        assert Base.metadata.tables == {}
+    def test_the_expected_tables_are_registered(self) -> None:
+        """Importing app.persistence.models must register every table.
+
+        A model that is not imported is invisible to Alembic autogenerate, which
+        would then silently propose dropping its table.
+        """
+        assert set(Base.metadata.tables) == {
+            "audit_event",
+            "exchange",
+            "fx_rate_snapshot",
+            "risk_configuration",
+            "system_event",
+            "trading_configuration",
+            "trading_pair",
+        }
+
+    def test_every_monetary_column_is_numeric(self) -> None:
+        """AC-17 at the schema level: no float anywhere on the money path."""
+        monetary_suffixes = ("_ron", "_percent", "_quote", "peg", "rate", "ratio")
+        for table in Base.metadata.tables.values():
+            for column in table.columns:
+                if not column.name.endswith(monetary_suffixes):
+                    continue
+                if not isinstance(column.type, Numeric):
+                    continue
+                assert column.type.asdecimal is True, f"{table.name}.{column.name}"
+                assert column.type.scale is not None, f"{table.name}.{column.name} has no scale"
 
 
 class TestDatabasePasswordIsTreatedAsASecret:

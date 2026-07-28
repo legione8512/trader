@@ -55,7 +55,7 @@ risk.
 |-------|-------------|--------|
 | 0 | Requirements finalisation | Done |
 | 1 | Repository and local environment | Done |
-| 2 | Domain model and persistence | Not started |
+| 2 | Domain model and persistence | In progress |
 | 3 | Public Binance market data | Not started |
 | 4 | Strategy research framework | Not started |
 | 5 | Risk engine | Not started |
@@ -117,6 +117,23 @@ effect of a restart.
 docker compose run --rm backend alembic upgrade head
 ```
 
+### 3b. Seed the initial configuration
+
+Creates the Binance exchange record, the BTCUSDT and ETHUSDT pairs, and version
+1 of the risk and trading configuration. Running it twice changes nothing.
+
+```bash
+docker compose run --rm backend python -m app.cli seed
+```
+
+Two safety defaults are deliberate: trading pairs are created **disabled**, and
+the trading configuration is created in `SIGNAL_ONLY` mode regardless of what
+the environment says. A freshly seeded database is never armed to trade.
+
+```bash
+docker compose run --rm backend python -m app.cli show-config
+```
+
 ### 4. Run the frontend
 
 The frontend runs on the host, not in a container. Vite's hot module
@@ -150,8 +167,17 @@ cd backend && .venv/Scripts/python.exe -m uvicorn app.main:create_app --factory 
 
 ### 6. Checks
 
+Integration tests need a real PostgreSQL. They create and migrate their own
+`trader_test` database, so they never touch your development data.
+
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest
+```
+
+Without a database available, run the offline subset:
+
+```bash
+cd backend && .venv/Scripts/python.exe -m pytest -m "not integration"
 ```
 
 ```bash
