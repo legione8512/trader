@@ -282,6 +282,73 @@ class RiskVerdict(StrEnum):
     REJECTED = "REJECTED"
 
 
+class RuleAction(StrEnum):
+    """What triggering a rule causes. See docs/RISK_RULES.md section 2.
+
+    Ordered by how far the consequence reaches, which is what lets the engine
+    aggregate several triggered rules into one outcome without a chain of
+    conditionals deciding which matters most.
+    """
+
+    #: Makes a new session possible. Never causes one, and never refuses.
+    ALLOW_RE_EVALUATION = "ALLOW_RE_EVALUATION"
+    #: This proposal is refused. The day and the session continue.
+    REJECT_ORDER = "REJECT_ORDER"
+    #: The session closes. A new one may start only if the restart rule allows.
+    CLOSE_SESSION = "CLOSE_SESSION"
+    #: The day moves to DAILY_STOP_REACHED. No further entries today - but open
+    #: positions are still managed to exit.
+    HALT_DAY = "HALT_DAY"
+    #: Everything is refused until an operator clears the condition.
+    REJECT_ALL = "REJECT_ALL"
+
+    @property
+    def refuses_the_proposal(self) -> bool:
+        """Whether triggering this rule prevents the trade under evaluation.
+
+        ``ALLOW_RE_EVALUATION`` is the odd one out: R-08 triggering is a
+        permission, not a refusal, and treating "triggered" as "bad" for every
+        rule would silently invert it.
+        """
+        return self is not RuleAction.ALLOW_RE_EVALUATION
+
+    @property
+    def reach(self) -> int:
+        """How far the consequence extends. Higher wins when several trigger."""
+        return {
+            RuleAction.ALLOW_RE_EVALUATION: 0,
+            RuleAction.REJECT_ORDER: 1,
+            RuleAction.CLOSE_SESSION: 2,
+            RuleAction.HALT_DAY: 3,
+            RuleAction.REJECT_ALL: 4,
+        }[self]
+
+
+class RuleStatus(StrEnum):
+    """The outcome of evaluating one rule.
+
+    Four states rather than a boolean, because "did not refuse" hides three
+    genuinely different situations, and an operator reading an audit record
+    needs to tell them apart.
+    """
+
+    #: Evaluated against real inputs; the condition was not met.
+    PASSED = "PASSED"
+    #: Evaluated; the condition was met, so the rule's action applies.
+    TRIGGERED = "TRIGGERED"
+    #: Deliberately switched off, for example R-23 by decision OD-03. Not a
+    #: gap - a decision, and one that is visible in the record.
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    #: The threshold has never been calibrated. Refuses, because an
+    #: uncalibrated mandatory gate is a gate nobody has measured, and treating
+    #: an unknown limit as "no limit" is how a protection becomes decorative.
+    NOT_CALIBRATED = "NOT_CALIBRATED"
+
+    @property
+    def blocks(self) -> bool:
+        return self in {RuleStatus.TRIGGERED, RuleStatus.NOT_CALIBRATED}
+
+
 class DailyPnlBasis(StrEnum):
     """Which P&L the daily loss limit is evaluated against (rule R-26).
 
@@ -362,3 +429,8 @@ class RiskReasonCode(StrEnum):
     DAY_BOUNDARY_NO_ENTRY_WINDOW = "DAY_BOUNDARY_NO_ENTRY_WINDOW"
     NO_VALID_OPPORTUNITY = "NO_VALID_OPPORTUNITY"
     STRATEGY_DISABLED = "STRATEGY_DISABLED"
+    #: A mandatory gate has never been calibrated, so the engine cannot judge
+    #: it. Distinct from the gate's own code on purpose: reporting
+    #: SPREAD_TOO_WIDE when the maximum spread was never set would tell an
+    #: operator the market was bad, when in fact the configuration is missing.
+    RISK_CONFIGURATION_INCOMPLETE = "RISK_CONFIGURATION_INCOMPLETE"
