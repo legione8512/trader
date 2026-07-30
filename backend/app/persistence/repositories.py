@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -20,6 +20,8 @@ from app.domain.enums import (
     AuditActor,
     EventSeverity,
     HealthStatus,
+    RiskVerdict,
+    SignalStatus,
     TradingDayStatus,
     TradingSessionStatus,
 )
@@ -28,7 +30,11 @@ from app.persistence.models import (
     AuditEvent,
     Exchange,
     FxRateSnapshot,
+    RiskAssessment,
     RiskConfiguration,
+    Signal,
+    Strategy,
+    StrategyVersion,
     SystemEvent,
     TradingConfiguration,
     TradingDay,
@@ -271,6 +277,137 @@ class TradingSessionRepository:
             .where(TradingSession.trading_day_id == trading_day_id)
             .order_by(TradingSession.sequence)
         )
+        return result.scalars().all()
+
+
+class StrategyRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_name(self, name: str) -> Strategy | None:
+        result = await self._session.execute(select(Strategy).where(Strategy.name == name))
+        return result.scalar_one_or_none()
+
+    async def add(self, strategy: Strategy) -> Strategy:
+        self._session.add(strategy)
+        await self._session.flush()
+        return strategy
+
+    async def get_active_version(self, strategy_id: uuid.UUID) -> StrategyVersion | None:
+        result = await self._session.execute(
+            select(StrategyVersion).where(
+                StrategyVersion.strategy_id == strategy_id,
+                StrategyVersion.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def next_version_number(self, strategy_id: uuid.UUID) -> int:
+        result = await self._session.execute(
+            select(StrategyVersion.version)
+            .where(StrategyVersion.strategy_id == strategy_id)
+            .order_by(StrategyVersion.version.desc())
+            .limit(1)
+        )
+        highest = result.scalar_one_or_none()
+        return 1 if highest is None else highest + 1
+
+    async def activate_version(self, version: StrategyVersion) -> None:
+        """Make one version active, deactivating the rest of that strategy.
+
+        Deactivation is flushed first: a partial unique index allows only one
+        active version per strategy, so the opposite order fails the constraint.
+        """
+        await self._session.execute(
+            update(StrategyVersion)
+            .where(
+                StrategyVersion.strategy_id == version.strategy_id,
+                StrategyVersion.is_active.is_(True),
+            )
+            .values(is_active=False)
+        )
+        await self._session.flush()
+
+        version.is_active = True
+        self._session.add(version)
+        await self._session.flush()
+
+
+class SignalRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, signal: Signal) -> Signal:
+        self._session.add(signal)
+        await self._session.flush()
+        return signal
+
+    async def list_for_day(self, trading_day_id: uuid.UUID) -> Sequence[Signal]:
+        result = await self._session.execute(
+            select(Signal)
+            .where(Signal.trading_day_id == trading_day_id)
+            .order_by(Signal.generated_at)
+        )
+        return result.scalars().all()
+
+    async def list_awaiting_operator(self) -> Sequence[Signal]:
+        """SIGNAL_ONLY mode: proposals the operator has not answered yet."""
+        result = await self._session.execute(
+            select(Signal)
+            .where(Signal.status == SignalStatus.AWAITING_OPERATOR)
+            .order_by(Signal.generated_at)
+        )
+        return result.scalars().all()
+
+    async def list_expirable(self, at: datetime) -> Sequence[Signal]:
+        """Signals past their expiry that have not been marked expired yet."""
+        result = await self._session.execute(
+            select(Signal)
+            .where(
+                Signal.expires_at.is_not(None),
+                Signal.expires_at <= at,
+                Signal.status.in_([SignalStatus.RISK_APPROVED, SignalStatus.AWAITING_OPERATOR]),
+            )
+            .order_by(Signal.expires_at)
+        )
+        return result.scalars().all()
+
+
+class RiskAssessmentRepository:
+    """Append-only, like the audit trail."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, assessment: RiskAssessment) -> RiskAssessment:
+        self._session.add(assessment)
+        await self._session.flush()
+        return assessment
+
+    async def list_for_signal(self, signal_id: uuid.UUID) -> Sequence[RiskAssessment]:
+        result = await self._session.execute(
+            select(RiskAssessment)
+            .where(RiskAssessment.signal_id == signal_id)
+            .order_by(RiskAssessment.evaluated_at)
+        )
+        return result.scalars().all()
+
+    async def list_rejections_with_reason(
+        self, reason_code: str, since: datetime | None = None
+    ) -> Sequence[RiskAssessment]:
+        """Every refusal caused by one specific rule.
+
+        This is the question an operator actually asks - "why did we not trade
+        last week?" - and the GIN index over ``reason_codes`` is what makes it
+        an indexed lookup instead of a table scan.
+        """
+        statement = select(RiskAssessment).where(
+            RiskAssessment.verdict == RiskVerdict.REJECTED,
+            RiskAssessment.reason_codes.contains([reason_code]),
+        )
+        if since is not None:
+            statement = statement.where(RiskAssessment.evaluated_at >= since)
+        result = await self._session.execute(statement.order_by(RiskAssessment.evaluated_at))
         return result.scalars().all()
 
 
