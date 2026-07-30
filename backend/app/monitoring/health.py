@@ -8,7 +8,7 @@ layer.
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -102,10 +102,17 @@ def build_database_check(engine: AsyncEngine) -> HealthCheck:
     return database_check
 
 
-def build_default_registry(settings: Settings, engine: AsyncEngine) -> HealthRegistry:
-    """Create the registry with the checks available in Phase 1.
+def build_default_registry(
+    settings: Settings,
+    engine: AsyncEngine,
+    *,
+    extra_checks: Mapping[str, HealthCheck] | None = None,
+) -> HealthRegistry:
+    """Create the registry with the always-available checks.
 
-    Exchange connectivity and market-data freshness checks arrive in Phase 3.
+    ``extra_checks`` is how Phase 3 adds market-data freshness and exchange
+    connectivity without this module importing either: a check is a callable,
+    and the registry does not care where it came from.
     """
     registry = HealthRegistry()
 
@@ -137,4 +144,6 @@ def build_default_registry(settings: Settings, engine: AsyncEngine) -> HealthReg
     registry.register("application", application_check)
     registry.register("configuration", configuration_check)
     registry.register("database", build_database_check(engine))
+    for name, check in (extra_checks or {}).items():
+        registry.register(name, check)
     return registry

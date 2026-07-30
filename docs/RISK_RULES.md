@@ -26,7 +26,7 @@ No magic numbers scattered in code.
 | R-06 | Consecutive losses | `maximumConsecutiveLosses` | 3 | HALT DAY | `MAX_CONSECUTIVE_LOSSES_REACHED` |
 | R-07 | Session target | `sessionTargetPercent` | 2.00% | CLOSE SESSION | `SESSION_TARGET_REACHED` |
 | R-08 | Session restart threshold | `sessionRestartThresholdPercent` | 4.00% | ALLOW RE-EVALUATION | `SESSION_RESTART_ELIGIBLE` |
-| R-09 | Market data freshness | `maxCandleAgeSeconds` | TBD in Phase 3 | REJECT ORDER | `STALE_MARKET_DATA` |
+| R-09 | Market data freshness | `candleStalenessToleranceIntervals` | **2 intervals** (30 min on 15m) | REJECT ORDER | `STALE_MARKET_DATA` |
 | R-10 | Signal age | `maxSignalAgeSeconds` | TBD in Phase 4 | REJECT ORDER | `SIGNAL_EXPIRED` |
 | R-11 | Maximum spread | `maxSpreadBps` | Calibrated on real data | REJECT ORDER | `SPREAD_TOO_WIDE` |
 | R-12 | Minimum liquidity | `minOrderBookDepthQuote` | Calibrated on real data | REJECT ORDER | `LIQUIDITY_TOO_LOW` |

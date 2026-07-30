@@ -16,6 +16,11 @@ dependencies = [
     # HTTP client for exchange REST calls. Also what starlette's TestClient
     # requires, so the project has one HTTP library rather than two.
     "httpx2>=2.9",
+    # WebSocket client for the live kline stream. httpx does not speak
+    # WebSocket, and uvicorn[standard] already pulls this in for its own server
+    # side, so the dependency is not new to the image - only now declared,
+    # because we depend on it directly.
+    "websockets>=13.0",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
     "alembic>=1.14",

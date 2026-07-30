@@ -14,6 +14,7 @@ from app.api.routes import health as health_routes
 from app.config.settings import Settings, get_settings
 from app.core.logging import configure_logging, get_logger, register_configured_secrets
 from app.domain.enums import AutonomyMode
+from app.market_data.freshness import FeedFreshnessMonitor
 from app.monitoring.health import build_default_registry
 from app.persistence.database import build_engine, build_session_factory
 
@@ -83,6 +84,14 @@ def create_app(settings: Settings | None = None, *, engine: AsyncEngine | None =
     app.state.settings = active_settings
     app.state.engine = active_engine
     app.state.session_factory = build_session_factory(active_engine)
+    # Shared by the ingestion service, which records candle arrivals, and by the
+    # health endpoint, which reads them. Created here so both see one instance.
+    #
+    # The market-data check is NOT registered yet: it is registered by whatever
+    # starts a feed, together with the feeds it expects. Registering it while
+    # nothing ingests would report "no market data" as a permanent condition of
+    # the deployment rather than as the state of a feed.
+    app.state.feed_freshness = FeedFreshnessMonitor()
     app.state.health_registry = build_default_registry(active_settings, active_engine)
 
     app.add_middleware(

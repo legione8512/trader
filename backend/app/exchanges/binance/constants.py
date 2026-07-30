@@ -14,6 +14,7 @@ Sources:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Final
 
@@ -167,14 +168,63 @@ RETRY_AFTER_HEADER: Final = "retry-after"
 STREAM_MAX_CONNECTION_SECONDS: Final = 24 * 60 * 60
 
 #: Reconnect this long before the documented limit, so the rotation happens on
-#: our terms rather than mid-candle.
-STREAM_RECONNECT_MARGIN_SECONDS: Final = 15 * 60
+#: our terms rather than mid-candle. Deliberately longer than one candle on our
+#: primary timeframe: a margin equal to the candle length would let the
+#: replacement connection race the close of the candle we are waiting for.
+STREAM_RECONNECT_MARGIN_SECONDS: Final = 30 * 60
 
 #: "The WebSocket server will send a ping frame every 20 seconds. If the
 #: WebSocket server does not receive a pong frame back from the connection
 #: within a minute the connection will be disconnected."
 STREAM_SERVER_PING_INTERVAL_SECONDS: Final = 20
 STREAM_PONG_DEADLINE_SECONDS: Final = 60
+
+#: "A single connection can listen to a maximum of 1024 streams."
+STREAM_MAX_STREAMS_PER_CONNECTION: Final = 1024
+
+#: "WebSocket connections have a limit of 5 incoming messages per second",
+#: counting PING and PONG frames as well as JSON control messages. Exceeding it
+#: disconnects the client, so nothing here sends unsolicited traffic.
+STREAM_MAX_INCOMING_MESSAGES_PER_SECOND: Final = 5
+
+#: Path for a single stream: /ws/<streamName>.
+STREAM_RAW_PATH: Final = "/ws"
+#: Path for several streams on one connection:
+#: /stream?streams=<name1>/<name2>/<name3>.
+STREAM_COMBINED_PATH: Final = "/stream"
+
+#: Documented update speed of a kline stream for every interval except 1s.
+#: Silence noticeably longer than this means the feed is gone, not idle.
+STREAM_KLINE_UPDATE_MILLISECONDS: Final = 2000
+
+#: Envelope keys of a combined-stream message:
+#: {"stream":"<streamName>","data":<rawPayload>}.
+STREAM_ENVELOPE_NAME_KEY: Final = "stream"
+STREAM_ENVELOPE_DATA_KEY: Final = "data"
+
+#: Kline event fields. The payload IS an object here, unlike the REST response,
+#: so these are keys rather than positions.
+KLINE_EVENT_TYPE: Final = "kline"
+EVENT_TYPE_KEY: Final = "e"
+EVENT_TIME_KEY: Final = "E"
+EVENT_SYMBOL_KEY: Final = "s"
+EVENT_KLINE_KEY: Final = "k"
+
+KLINE_EVENT_OPEN_TIME: Final = "t"
+KLINE_EVENT_CLOSE_TIME: Final = "T"
+KLINE_EVENT_SYMBOL: Final = "s"
+KLINE_EVENT_INTERVAL: Final = "i"
+KLINE_EVENT_OPEN: Final = "o"
+KLINE_EVENT_CLOSE: Final = "c"
+KLINE_EVENT_HIGH: Final = "h"
+KLINE_EVENT_LOW: Final = "l"
+KLINE_EVENT_VOLUME: Final = "v"
+KLINE_EVENT_TRADE_COUNT: Final = "n"
+KLINE_EVENT_QUOTE_VOLUME: Final = "q"
+
+#: "Is this kline closed?" The single most important flag in the stream: every
+#: other update for the same candle is provisional and repaints.
+KLINE_EVENT_IS_CLOSED: Final = "x"
 
 
 def kline_stream_name(symbol: str, interval: BinanceInterval) -> str:
@@ -184,3 +234,20 @@ def kline_stream_name(symbol: str, interval: BinanceInterval) -> str:
     uppercase, and mixing them up yields a silent subscription to nothing.
     """
     return f"{symbol.lower()}@kline_{interval.value}"
+
+
+def combined_stream_url(stream_names: Sequence[str], base_url: str = STREAM_BASE_URL) -> str:
+    """URL subscribing to several streams over one connection.
+
+    One connection for every symbol we follow rather than one per symbol: fewer
+    sockets to keep alive, one reconnection to schedule, and one place where a
+    gap can appear.
+    """
+    if not stream_names:
+        raise ValueError("A combined stream needs at least one stream name")
+    if len(stream_names) > STREAM_MAX_STREAMS_PER_CONNECTION:
+        raise ValueError(
+            f"A single connection accepts at most {STREAM_MAX_STREAMS_PER_CONNECTION} "
+            f"streams, {len(stream_names)} were requested"
+        )
+    return f"{base_url}{STREAM_COMBINED_PATH}?streams={'/'.join(stream_names)}"
