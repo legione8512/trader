@@ -16,7 +16,13 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.enums import AuditActor, EventSeverity, HealthStatus
+from app.domain.enums import (
+    AuditActor,
+    EventSeverity,
+    HealthStatus,
+    TradingDayStatus,
+    TradingSessionStatus,
+)
 from app.persistence.mixins import utc_now
 from app.persistence.models import (
     AuditEvent,
@@ -25,7 +31,9 @@ from app.persistence.models import (
     RiskConfiguration,
     SystemEvent,
     TradingConfiguration,
+    TradingDay,
     TradingPair,
+    TradingSession,
 )
 
 
@@ -187,6 +195,83 @@ class FxRateRepository:
         self._session.add(snapshot)
         await self._session.flush()
         return snapshot
+
+
+class TradingDayRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_date(self, trading_date: date) -> TradingDay | None:
+        result = await self._session.execute(
+            select(TradingDay).where(TradingDay.trading_date == trading_date)
+        )
+        return result.scalar_one_or_none()
+
+    async def add(self, day: TradingDay) -> TradingDay:
+        self._session.add(day)
+        await self._session.flush()
+        return day
+
+    async def list_unclosed(self) -> Sequence[TradingDay]:
+        """Days that never reached CLOSED.
+
+        On startup this is what tells the application it crashed mid-day and
+        must reconcile before doing anything else.
+        """
+        result = await self._session.execute(
+            select(TradingDay)
+            .where(TradingDay.status != TradingDayStatus.CLOSED)
+            .order_by(TradingDay.trading_date)
+        )
+        return result.scalars().all()
+
+
+class TradingSessionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, trading_session: TradingSession) -> TradingSession:
+        self._session.add(trading_session)
+        await self._session.flush()
+        return trading_session
+
+    async def next_sequence(self, trading_day_id: uuid.UUID) -> int:
+        result = await self._session.execute(
+            select(TradingSession.sequence)
+            .where(TradingSession.trading_day_id == trading_day_id)
+            .order_by(TradingSession.sequence.desc())
+            .limit(1)
+        )
+        highest = result.scalar_one_or_none()
+        return 1 if highest is None else highest + 1
+
+    async def get_open_session(self, trading_day_id: uuid.UUID) -> TradingSession | None:
+        """The session currently in progress, if any.
+
+        At most one session is ever in progress: a new one starts only after the
+        previous has reached a closed state.
+        """
+        result = await self._session.execute(
+            select(TradingSession).where(
+                TradingSession.trading_day_id == trading_day_id,
+                TradingSession.status.in_(
+                    [
+                        TradingSessionStatus.EVALUATING,
+                        TradingSessionStatus.OPEN,
+                        TradingSessionStatus.CLOSING,
+                    ]
+                ),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_day(self, trading_day_id: uuid.UUID) -> Sequence[TradingSession]:
+        result = await self._session.execute(
+            select(TradingSession)
+            .where(TradingSession.trading_day_id == trading_day_id)
+            .order_by(TradingSession.sequence)
+        )
+        return result.scalars().all()
 
 
 class AuditRepository:

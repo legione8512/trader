@@ -10,6 +10,7 @@ from app.persistence.models.audit import AuditEvent, SystemEvent
 from app.persistence.models.configuration import RiskConfiguration, TradingConfiguration
 from app.persistence.models.fx import FxRateSnapshot
 from app.persistence.models.reference import Exchange, TradingPair
+from app.persistence.models.trading import TradingDay, TradingSession
 
 __all__ = [
     "AuditEvent",
@@ -18,5 +19,7 @@ __all__ = [
     "RiskConfiguration",
     "SystemEvent",
     "TradingConfiguration",
+    "TradingDay",
     "TradingPair",
+    "TradingSession",
 ]

@@ -94,7 +94,9 @@ class TestNamingConvention:
             "risk_configuration",
             "system_event",
             "trading_configuration",
+            "trading_day",
             "trading_pair",
+            "trading_session",
         }
 
     def test_every_monetary_column_is_numeric(self) -> None:
