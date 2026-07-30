@@ -23,7 +23,12 @@ from decimal import Decimal
 from typing import Any
 
 from app.domain.errors import DomainError
-from app.domain.money import is_multiple_of_step, round_down_to_step, to_decimal
+from app.domain.money import (
+    is_multiple_of_step,
+    round_down_to_step,
+    round_up_to_step,
+    to_decimal,
+)
 
 
 class SymbolFilterError(DomainError):
@@ -46,11 +51,26 @@ class PriceFilter:
             return False
         return self.tick_size <= 0 or is_multiple_of_step(price, self.tick_size)
 
-    def round_price(self, price: Decimal) -> Decimal:
+    def round_price_down(self, price: Decimal) -> Decimal:
         """Snap a price onto the exchange's grid, downwards."""
         if self.tick_size <= 0:
             return price
         return round_down_to_step(price, self.tick_size)
+
+    def round_price_up(self, price: Decimal) -> Decimal:
+        """Snap a price onto the exchange's grid, upwards."""
+        if self.tick_size <= 0:
+            return price
+        return round_up_to_step(price, self.tick_size)
+
+    # NOTE: there is deliberately no "round away from this anchor" helper.
+    #
+    # One existed and was removed. Choosing the direction by comparing the price
+    # against the ALREADY-ROUNDED entry inverted a long position whenever the
+    # entry rounded down past the stop: the stop then compared as "above" and
+    # was rounded further up, landing on the wrong side of the entry entirely.
+    # The direction belongs to the side of the trade, which the caller knows and
+    # this filter does not.
 
 
 @dataclass(frozen=True, slots=True)

@@ -108,11 +108,22 @@ class TestPriceFilter:
         assert price_filter.is_satisfied_by(Decimal("65000.01")) is True
         assert price_filter.is_satisfied_by(Decimal("65000.015")) is False
 
-    def test_rounding_snaps_downwards_onto_the_grid(self) -> None:
+    def test_rounding_snaps_onto_the_grid_in_the_requested_direction(self) -> None:
+        """Both directions exist, and the caller picks. There is deliberately no
+        helper that infers the direction from an anchor: one existed, and it
+        inverted a long position whose entry rounded down past its stop."""
         price_filter = PriceFilter(
             min_price=Decimal("0.01"), max_price=Decimal("1000000"), tick_size=Decimal("0.01")
         )
-        assert price_filter.round_price(Decimal("65000.019")) == Decimal("65000.01")
+        assert price_filter.round_price_down(Decimal("65000.019")) == Decimal("65000.01")
+        assert price_filter.round_price_up(Decimal("65000.011")) == Decimal("65000.02")
+
+    def test_a_price_already_on_the_grid_is_unchanged_either_way(self) -> None:
+        price_filter = PriceFilter(
+            min_price=Decimal("0.01"), max_price=Decimal("1000000"), tick_size=Decimal("0.01")
+        )
+        assert price_filter.round_price_down(Decimal("65000.01")) == Decimal("65000.01")
+        assert price_filter.round_price_up(Decimal("65000.01")) == Decimal("65000.01")
 
     def test_a_zero_bound_means_no_bound(self) -> None:
         price_filter = PriceFilter(
