@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -178,12 +179,26 @@ class TestTheRealRulesRun:
         with pytest.raises(RiskLimitsError, match="rounds to zero"):
             replace(CALIBRATED, maximum_risk_per_trade_percent=Decimal("0.0001"))
 
-    def test_the_consecutive_loss_rule_halts_a_losing_run(self) -> None:
-        """Leaving the day state at zero would let a run take fifty losing
-        trades in a row that the live system would have stopped after three."""
-        falling = [Decimal(1000) * (Decimal("0.995") ** index) for index in range(200)]
+    def test_the_consecutive_loss_rule_halts_each_day_separately(self) -> None:
+        """R-06 halts a DAY, not a run.
+
+        The first version of the engine never rolled the day over, so three
+        losses anywhere in two years stopped everything for good: a two-year
+        replay produced 3 trades from 574 proposals and the refusals all blamed
+        this rule. The numbers read as a verdict on the strategy and were an
+        artefact of the engine.
+        """
+        falling = [Decimal(1000) * (Decimal("0.995") ** index) for index in range(400)]
         result = run_backtest(AlwaysLong(), window_from(falling), config())
-        assert len(result.trades) <= CALIBRATED.maximum_consecutive_losses
+
+        per_day: dict[str, int] = {}
+        for item in result.trades:
+            key = item.entry_time.astimezone(ZoneInfo("Europe/Bucharest")).date().isoformat()
+            per_day[key] = per_day.get(key, 0) + 1
+
+        assert len(per_day) > 1, "the fixture must span more than one trading day"
+        for day, taken in per_day.items():
+            assert taken <= CALIBRATED.maximum_consecutive_losses, f"{day} took {taken}"
         assert RiskReasonCode.MAX_CONSECUTIVE_LOSSES_REACHED.value in result.rejections
 
 

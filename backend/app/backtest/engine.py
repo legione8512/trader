@@ -23,8 +23,9 @@ recorded on the result, and reported alongside it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
+from zoneinfo import ZoneInfo
 
 from app.backtest.fills import (
     Bar,
@@ -50,6 +51,7 @@ from app.domain.risk.economics import TradingCosts, net_reward_risk_ratio
 from app.domain.risk.engine import evaluate as evaluate_risk
 from app.domain.risk.limits import RiskLimits
 from app.domain.symbol_filters import SymbolFilters
+from app.domain.trading_calendar import day_end, trading_date_for
 from app.strategies.base import SignalProposal, Strategy, StrategyContext, code_fingerprint
 
 ZERO = Decimal(0)
@@ -103,6 +105,7 @@ class BacktestConfig:
     #: that is an assumption: RON/USDT moved over any period worth testing.
     funding_rate: Decimal
     market: MarketAssumptions
+    trading_timezone: str = "Europe/Bucharest"
     entry_timeout_bars: int = 4
     max_bars_in_trade: int | None = None
 
@@ -218,12 +221,15 @@ def run_backtest(
     )
 
     required = strategy.required_candles
-    day = _RunningDay(config.limits)
+    day = _RunningDay(config.limits, config.trading_timezone)
     index = required - 1
     with localcontext() as arithmetic:
         arithmetic.prec = CALCULATION_PRECISION
         while index < len(bars):
             result.bars_evaluated += 1
+            # Before anything is evaluated: a candle belonging to a new day
+            # must be judged against a fresh day's counters, not yesterday's.
+            day.advance_to(bars[index].open_time)
             # The same bounded history a live run would have loaded, so the two
             # take identical code paths.
             view = window.slice(index - required + 1, index + 1)
@@ -313,7 +319,7 @@ def _context(
     return RiskContext(
         evaluated_at=now,
         limits=config.limits,
-        day=day.state(),
+        day=day.state(now),
         market=MarketState(
             # Zero, and true: the decision is taken at this candle's close, so
             # the data is exactly as fresh as it can be.
@@ -406,32 +412,54 @@ def _settle(
 
 
 class _RunningDay:
-    """The day state the risk rules read, updated as the run proceeds.
+    """The day state the risk rules read, rolling over at the day boundary.
 
-    Deliberately not a full trading-day simulation - session boundaries and day
-    rollovers arrive in the next milestone. What it does carry is the state that
-    changes the rules' answers within a run: the loss so far, the trade count
-    and the consecutive-loss streak. Leaving those at zero would let a run take
-    fifty losing trades in a row that the live system would have halted after
-    three.
+    **The rollover is not a detail.** Without it a whole run is one endless day:
+    three losing trades anywhere in two years trip R-06 and nothing can ever
+    trade again. A first version of this class had no rollover and produced
+    exactly that - 3 trades out of 574 proposals, with 571 refusals blaming the
+    consecutive-loss rule. The numbers looked like a verdict on the strategy and
+    were an artefact of the engine.
+
+    Days are resolved through the same trading calendar the live system uses, so
+    a 23-hour and a 25-hour day are the ones the operator's timezone actually
+    has rather than fixed 24-hour blocks.
     """
 
-    def __init__(self, limits: RiskLimits) -> None:
+    def __init__(self, limits: RiskLimits, timezone: str) -> None:
         self._limits = limits
+        self._timezone = ZoneInfo(timezone)
+        self._date: date | None = None
         self._realised = ZERO
         self._trades = 0
         self._consecutive_losses = 0
+        self._day_end: datetime | None = None
 
-    def state(self) -> DayState:
+    def advance_to(self, instant: datetime) -> None:
+        """Roll the day over if this candle belongs to a new one."""
+        today = trading_date_for(instant, self._timezone)
+        if today == self._date:
+            return
+        self._date = today
+        self._realised = ZERO
+        self._trades = 0
+        # The streak resets too. R-06 halts a DAY; carrying the count across the
+        # boundary would halt every following day as well.
+        self._consecutive_losses = 0
+        self._day_end = day_end(today, self._timezone)
+
+    def state(self, now: datetime) -> DayState:
+        remaining = self._day_end - now if self._day_end is not None else None
         return DayState(
             realised_pnl=self._realised,
             trades_today=self._trades,
             consecutive_losses=self._consecutive_losses,
+            # One session per day here. Sessions are modelled in the paper
+            # trading phase, where a session can actually be closed and
+            # reopened; pretending to have them now would make R-07 fire on a
+            # boundary the engine cannot honour.
             session_pnl=self._realised,
-            # Never near the boundary: day rollover is modelled in 6.2, and
-            # pretending to know the remaining time would make R-24 fire on an
-            # invented number.
-            time_remaining_in_day=timedelta(hours=12),
+            time_remaining_in_day=remaining,
         )
 
     def record(self, trade: BacktestTrade) -> None:

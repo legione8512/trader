@@ -235,6 +235,21 @@ class TestSimulationAssumptionsAreSurfaced:
         assert metrics.ambiguous_exits == 1
         assert "load-bearing" in metrics.summary()
 
+    def test_a_negative_edge_is_reported_as_evidence_not_as_absence(self) -> None:
+        """A strategy whose interval sits entirely below zero has not failed to
+        demonstrate an edge - it has demonstrated a negative one, and that calls
+        for a different decision."""
+        metrics = _compute(repeated(["-1", "-1", "-1", "-1", "1"], 60))
+        assert metrics.expectancy_r.estimate < 0
+        assert metrics.expectancy_r.includes_zero is False
+        assert "DEMONSTRATED NEGATIVE EDGE" in metrics.verdict
+        assert "it is evidence" in metrics.verdict
+
+    def test_an_inconclusive_run_says_so_in_both_directions(self) -> None:
+        metrics = _compute(series("2.5", "-1", "2.5"))
+        assert "INCONCLUSIVE" in metrics.verdict
+        assert "either direction" in metrics.verdict
+
 
 class TestEmptyRun:
     def test_a_run_with_no_trades_claims_nothing(self) -> None:

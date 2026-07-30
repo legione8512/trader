@@ -13,10 +13,21 @@ import argparse
 import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+from app.backtest.engine import BacktestConfig, MarketAssumptions
+from app.backtest.runner import format_segment, load_window, run_segment, split_in_sample
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, get_logger, register_configured_secrets
 from app.domain.enums import Timeframe
+from app.domain.risk.economics import TradingCosts
+from app.domain.risk.limits import RiskLimits
+from app.domain.symbol_filters import (
+    LotSizeFilter,
+    NotionalFilter,
+    PriceFilter,
+    SymbolFilters,
+)
 from app.exchanges.binance.market_data import BinanceMarketDataAdapter
 from app.exchanges.binance.rest import BinanceRestClient
 from app.market_data.history import HistoryDownloader
@@ -24,8 +35,80 @@ from app.persistence.candles import CandleRepository
 from app.persistence.database import build_engine, build_session_factory
 from app.persistence.repositories import ConfigurationRepository, ExchangeRepository
 from app.persistence.seed import BINANCE_CODE, seed
+from app.strategies.trend_pullback import TrendPullbackStrategy
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Backtest parameters
+# ---------------------------------------------------------------------------
+#
+# The market-quality gates are set WIDE here, and that is a stated choice
+# rather than an oversight. R-11, R-12 and R-15 judge live execution quality
+# against measurements a candle does not contain; leaving them uncalibrated
+# would refuse every trade and produce an empty run that says nothing about
+# whether the strategy has an edge. They are calibrated against real
+# measurements in Phase 8, not guessed from history here.
+#
+# R-14 is NOT widened. The minimum reward-to-risk is the gate that decides
+# whether a trade is worth taking after costs, and it binds.
+
+BACKTEST_LIMITS = RiskLimits(
+    reference_capital=Decimal("1000.00"),
+    max_candle_age_seconds=1800,
+    max_signal_age_seconds=900,
+    max_spread_bps=Decimal("100"),
+    min_order_book_depth_quote=Decimal("1"),
+    min_atr_percent=Decimal("0.01"),
+    max_atr_percent=Decimal("50.00"),
+    min_reward_risk_ratio=Decimal("1.8"),
+    max_estimated_slippage_bps=Decimal("100"),
+    max_clock_drift_ms=1000,
+)
+
+#: Binance spot with the BNB discount (decision OD-16), verified from the
+#: published schedule: 0.075% per side.
+BACKTEST_COSTS = TradingCosts(
+    fee_rate_per_side=Decimal("0.00075"), estimated_slippage_bps=Decimal("2")
+)
+
+BACKTEST_MARKET = MarketAssumptions(
+    spread_bps=Decimal("2"),
+    order_book_depth_quote=Decimal("500000"),
+    slippage_bps=Decimal("2"),
+)
+
+#: Held constant for the whole run. RON/USDT moved over two years, which is why
+#: every headline figure is reported in R as well.
+BACKTEST_FUNDING_RATE = Decimal("4.60")
+
+
+def default_filters_for(symbol: str) -> SymbolFilters:
+    """Filters used for backtesting.
+
+    Deliberately approximate and deliberately not fetched live: a two-year
+    replay would otherwise be judged against today's filters, which is its own
+    small lie. What matters for the result is the minimum notional and the lot
+    step, both of which have been stable for these symbols.
+    """
+    return SymbolFilters(
+        symbol=symbol,
+        price=PriceFilter(
+            min_price=Decimal("0.01"),
+            max_price=Decimal("10000000"),
+            tick_size=Decimal("0.01"),
+        ),
+        lot_size=LotSizeFilter(
+            min_quantity=Decimal("0.00001"),
+            max_quantity=Decimal("9000"),
+            step_size=Decimal("0.00001"),
+        ),
+        notional=NotionalFilter(
+            min_notional=Decimal("5"),
+            max_notional=Decimal("9000000"),
+            applies_to_market_orders=True,
+        ),
+    )
 
 
 async def _seed() -> int:
@@ -162,6 +245,68 @@ async def _backfill(days: int, timeframe: Timeframe, symbols: list[str] | None) 
     return 0
 
 
+async def _backtest(symbol: str, timeframe: Timeframe, days: int) -> int:
+    """Replay the baseline strategy over stored candles.
+
+    The development segment is reported first and the held-out segment second,
+    in that order and only once. The split is chronological and its size is
+    fixed in code: a split anyone can move is a split someone will move.
+    """
+    settings = get_settings()
+    engine = build_engine(settings)
+    session_factory = build_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            exchange = await ExchangeRepository(session).get_by_code(BINANCE_CODE)
+            if exchange is None:
+                logger.error("no_exchange_row", hint="Run: python -m app.cli seed")
+                return 1
+            pair = await ExchangeRepository(session).get_pair(exchange.id, symbol.upper())
+            if pair is None:
+                logger.error("unknown_pair", symbol=symbol)
+                return 1
+
+            end = datetime.now(UTC)
+            window = await load_window(
+                session,
+                trading_pair_id=pair.id,
+                symbol=pair.symbol,
+                timeframe=timeframe,
+                start=end - timedelta(days=days),
+                end=end,
+            )
+
+        strategy = TrendPullbackStrategy()
+        config = BacktestConfig(
+            symbol=pair.symbol,
+            timeframe=timeframe,
+            limits=BACKTEST_LIMITS,
+            costs=BACKTEST_COSTS,
+            filters=default_filters_for(pair.symbol),
+            funding_rate=BACKTEST_FUNDING_RATE,
+            market=BACKTEST_MARKET,
+        )
+
+        development, held_out = split_in_sample(window)
+        print(format_segment(run_segment(strategy, development, config, "DEVELOPMENT")))  # noqa: T201
+        print()  # noqa: T201
+        print(format_segment(run_segment(strategy, held_out, config, "HELD OUT")))  # noqa: T201
+        print()  # noqa: T201
+        print(  # noqa: T201
+            "Assumptions this run depends on:\n"
+            + "\n".join(
+                f"  {group}.{key}: {value}"
+                for group, entries in run_segment(
+                    strategy, held_out, config, "x"
+                ).result.assumptions.items()
+                for key, value in entries.items()
+            )
+        )
+    finally:
+        await engine.dispose()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Trader maintenance commands")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -187,6 +332,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit to one symbol; repeat for several. Default: every enabled pair.",
     )
 
+    backtest = subparsers.add_parser(
+        "backtest", help="Replay the baseline strategy over stored candles"
+    )
+    backtest.add_argument("--symbol", default="BTCUSDT")
+    backtest.add_argument(
+        "--timeframe",
+        default=Timeframe.M15.value,
+        choices=[frame.value for frame in Timeframe],
+    )
+    backtest.add_argument("--days", type=int, default=730)
+
     arguments = parser.parse_args(argv)
 
     settings = get_settings()
@@ -197,6 +353,10 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_seed())
     if arguments.command == "show-config":
         return asyncio.run(_show_config())
+    if arguments.command == "backtest":
+        return asyncio.run(
+            _backtest(arguments.symbol, Timeframe(arguments.timeframe), arguments.days)
+        )
     if arguments.command == "backfill":
         if arguments.days < 1:
             parser.error("--days must be at least 1")

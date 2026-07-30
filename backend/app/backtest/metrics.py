@@ -186,6 +186,39 @@ class BacktestMetrics:
             and self.expectancy_r.estimate > ZERO
         )
 
+    @property
+    def verdict(self) -> str:
+        """The one line that must be true, in each of the four cases.
+
+        Written out rather than collapsed into "no edge", because the four
+        outcomes call for different decisions. A strategy whose expectancy
+        interval sits entirely below zero has not failed to demonstrate an
+        edge - it has demonstrated a negative one, and continuing to develop it
+        is a different mistake from continuing to gather data on it.
+        """
+        if not self.adequacy.supports_a_conclusion:
+            return (
+                f"INCONCLUSIVE: {self.trade_count} trades is too few to establish "
+                f"anything, in either direction."
+            )
+        if self.expectancy_r.includes_zero:
+            return (
+                "NO DEMONSTRATED EDGE: the expectancy interval includes zero, so "
+                "this run cannot distinguish a real edge from noise."
+            )
+        if self.expectancy_r.estimate < ZERO:
+            return (
+                f"DEMONSTRATED NEGATIVE EDGE: the expectancy interval "
+                f"[{self.expectancy_r.low}, {self.expectancy_r.high}] R lies entirely "
+                f"below zero. This is not an absence of evidence; it is evidence."
+            )
+        return (
+            f"EDGE DEMONSTRATED on this data: expectancy "
+            f"{self.expectancy_r.estimate} R, interval "
+            f"[{self.expectancy_r.low}, {self.expectancy_r.high}] R. Evidence about "
+            f"the regime this data covered, not a forecast."
+        )
+
     def summary(self) -> str:
         """A report that leads with the caveat rather than burying it."""
         lines = [
@@ -199,11 +232,7 @@ class BacktestMetrics:
         ]
         if self.profit_factor is not None:
             lines.append(f"Profit factor: {self.profit_factor}")
-        if not self.has_a_demonstrated_edge:
-            lines.append(
-                "NO DEMONSTRATED EDGE: the expectancy interval includes zero, or "
-                "there are too few trades for it to mean anything."
-            )
+        lines.append(self.verdict)
         if self.gapped_exits or self.ambiguous_exits:
             lines.append(
                 f"Simulation assumptions were load-bearing in "
