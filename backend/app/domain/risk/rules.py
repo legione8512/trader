@@ -620,8 +620,21 @@ def _r16(context: RiskContext) -> RuleOutcome:
         "sizing_reason_codes": ",".join(system.sizing_reason_codes) or "none",
     }
     if not system.sizing_is_viable:
-        return _triggered(
+        # The SPECIFIC code, when sizing gave one. The rule table lists both
+        # EXCHANGE_FILTER_VIOLATION and MIN_NOTIONAL_NOT_MET against R-16, and
+        # the difference is what an operator acts on: a minimum-notional refusal
+        # says the risk budget is too small for this symbol and has an obvious
+        # remedy, while a generic filter violation says something else entirely.
+        # Collapsing them would hide the one that can be fixed.
+        code = (
+            RiskReasonCode.MIN_NOTIONAL_NOT_MET
+            if RiskReasonCode.MIN_NOTIONAL_NOT_MET.value in system.sizing_reason_codes
+            else RiskReasonCode.EXCHANGE_FILTER_VIOLATION
+        )
+        return _build(
             R16,
+            RuleStatus.TRIGGERED,
+            reason_code=code,
             inputs=inputs,
             detail=(
                 "Position sizing could not produce an order the exchange would "
@@ -873,8 +886,9 @@ ALL_RULES: tuple[RiskRule, ...] = (
 #: enum, so a code that becomes orphaned by a refactor fails the build.
 CODES_EMITTED_ELSEWHERE: dict[RiskReasonCode, str] = {
     RiskReasonCode.MIN_NOTIONAL_NOT_MET: (
-        "Emitted by position sizing and surfaced through R-16, which reports "
-        "sizing's conclusion rather than recomputing it."
+        "Emitted by R-16 in place of its own code when position sizing named "
+        "this specific reason, so the refusal an operator can act on is not "
+        "collapsed into the generic one."
     ),
     RiskReasonCode.NO_VALID_OPPORTUNITY: (
         "Emitted by the signal engine when no strategy proposed anything. There "

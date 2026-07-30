@@ -412,12 +412,21 @@ class TestSystemGates:
     def test_a_sizing_failure_is_reported_not_recomputed(self) -> None:
         """The filter arithmetic lives in position sizing. A second
         implementation here could disagree with the first."""
+        system = SystemState(sizing_is_viable=False, sizing_reason_codes=())
+        decision = evaluate(context(system=system))
+        assert RiskReasonCode.EXCHANGE_FILTER_VIOLATION in decision.reason_codes
+
+    def test_a_minimum_notional_refusal_keeps_its_own_code(self) -> None:
+        """It says the risk budget is too small for this symbol, which has an
+        obvious remedy. Collapsing it into the generic filter code would hide
+        the one refusal an operator can act on."""
         system = SystemState(
             sizing_is_viable=False,
             sizing_reason_codes=(RiskReasonCode.MIN_NOTIONAL_NOT_MET.value,),
         )
         decision = evaluate(context(system=system))
-        assert RiskReasonCode.EXCHANGE_FILTER_VIOLATION in decision.reason_codes
+        assert RiskReasonCode.MIN_NOTIONAL_NOT_MET in decision.reason_codes
+        assert RiskReasonCode.EXCHANGE_FILTER_VIOLATION not in decision.reason_codes
 
     def test_an_insufficient_balance_surfaces_through_its_own_rule(self) -> None:
         system = SystemState(

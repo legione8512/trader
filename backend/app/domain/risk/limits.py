@@ -90,6 +90,16 @@ class RiskLimits:
         if not (0 <= self.no_new_entry_minutes_before_day_end <= 1440):
             raise RiskLimitsError("no_new_entry_minutes_before_day_end must be within a day")
 
+        # A percentage can be legal and still derive an amount that rounds to
+        # nothing. A per-trade budget of 0.00 cannot size any position, so every
+        # sizing attempt would raise rather than refuse - a configuration error
+        # surfacing as a crash somewhere far from the configuration.
+        if self.risk_per_trade_amount <= ZERO:
+            raise RiskLimitsError(
+                f"maximum_risk_per_trade_percent {self.maximum_risk_per_trade_percent}% of "
+                f"{self.reference_capital} rounds to zero; no position could ever be sized."
+            )
+
     # --------------------------------------------------- derived amounts ---
     #
     # All rounded DOWN. A budget rounded up is a budget exceeded, and these are

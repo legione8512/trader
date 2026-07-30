@@ -182,6 +182,62 @@ class CandleWindow:
             volumes=self.volumes[-count:],
         )
 
+    @classmethod
+    def _unchecked(
+        cls,
+        symbol: str,
+        timeframe: Timeframe,
+        open_times: tuple[datetime, ...],
+        opens: tuple[Decimal, ...],
+        highs: tuple[Decimal, ...],
+        lows: tuple[Decimal, ...],
+        closes: tuple[Decimal, ...],
+        volumes: tuple[Decimal, ...],
+    ) -> CandleWindow:
+        """Build without revalidating. Only for slices of an already-valid window.
+
+        Validation is O(n) and a backtest takes one slice per candle, so
+        revalidating would make a run quadratic - and it would establish
+        nothing, because a contiguous, ordered, aligned series stays contiguous,
+        ordered and aligned when you take a run of consecutive elements out of
+        the middle of it.
+        """
+        instance = object.__new__(cls)
+        for name, value in (
+            ("symbol", symbol),
+            ("timeframe", timeframe),
+            ("open_times", open_times),
+            ("opens", opens),
+            ("highs", highs),
+            ("lows", lows),
+            ("closes", closes),
+            ("volumes", volumes),
+        ):
+            object.__setattr__(instance, name, value)
+        return instance
+
+    def slice(self, start: int, stop: int) -> CandleWindow:
+        """A run of consecutive candles, as its own window.
+
+        How a backtest replays: at each candle it hands the strategy the same
+        bounded history a live run would have loaded, so the two take identical
+        code paths and produce identical numbers.
+        """
+        if start < 0 or stop > len(self.open_times) or start > stop:
+            raise CandleWindowError(
+                f"Slice [{start}:{stop}] is outside a window of {len(self.open_times)}"
+            )
+        return CandleWindow._unchecked(
+            self.symbol,
+            self.timeframe,
+            self.open_times[start:stop],
+            self.opens[start:stop],
+            self.highs[start:stop],
+            self.lows[start:stop],
+            self.closes[start:stop],
+            self.volumes[start:stop],
+        )
+
     def series(self, name: str) -> Sequence[Decimal]:
         """One named column, for an indicator that takes a single series."""
         columns: dict[str, tuple[Decimal, ...]] = {
