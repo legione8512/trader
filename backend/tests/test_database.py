@@ -90,6 +90,7 @@ class TestNamingConvention:
         assert set(Base.metadata.tables) == {
             "audit_event",
             "balance_snapshot",
+            "candle",
             "exchange",
             "fx_rate_snapshot",
             "order",

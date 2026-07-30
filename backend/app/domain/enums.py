@@ -7,6 +7,7 @@ nothing from the infrastructure layers.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import timedelta
 from enum import StrEnum
 
 
@@ -257,6 +258,23 @@ class Timeframe(StrEnum):
             Timeframe.H4: 240,
             Timeframe.D1: 1440,
         }[self]
+
+    @property
+    def duration(self) -> timedelta:
+        return timedelta(minutes=self.minutes)
+
+
+class CandleSource(StrEnum):
+    """Where a stored candle came from.
+
+    Recorded because the provenance matters when data is questioned: a candle
+    backfilled after a gap was fetched under different conditions from one that
+    arrived live, and a report should be able to tell them apart.
+    """
+
+    REST_BACKFILL = "REST_BACKFILL"
+    REST_GAP_FILL = "REST_GAP_FILL"
+    WEBSOCKET = "WEBSOCKET"
 
 
 class RiskVerdict(StrEnum):
