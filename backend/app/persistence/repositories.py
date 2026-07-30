@@ -71,6 +71,20 @@ class ConfigurationRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_risk_configuration_by_id(
+        self, configuration_id: uuid.UUID
+    ) -> RiskConfiguration | None:
+        """The configuration a stored record points at.
+
+        How a trading day is judged by the parameters it was OPENED under
+        rather than by whichever version happens to be active now. Versioning
+        exists so a change at 14:00 cannot rewrite what the rules were at 09:00.
+        """
+        result = await self._session.execute(
+            select(RiskConfiguration).where(RiskConfiguration.id == configuration_id)
+        )
+        return result.scalar_one_or_none()
+
     async def get_risk_configuration_by_version(self, version: int) -> RiskConfiguration | None:
         result = await self._session.execute(
             select(RiskConfiguration).where(RiskConfiguration.version == version)
