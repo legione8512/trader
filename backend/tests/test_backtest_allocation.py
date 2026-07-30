@@ -15,6 +15,8 @@ import pytest
 from app.backtest.allocation import (
     AllocationError,
     AlwaysInvested,
+    DonchianChannel,
+    DonchianEnsemble,
     MovingAverageRegime,
     simulate_allocation,
 )
@@ -146,6 +148,68 @@ class TestMovingAverageRegime:
             simulate_allocation(
                 window(rising(30)), MovingAverageRegime(period=100), fee_per_side=NO_FEE
             )
+
+
+class TestDonchian:
+    def test_a_breakout_compares_against_preceding_bars_only(self) -> None:
+        """Including the current bar's high makes the test a tautology: a bar's
+        high is at least its close, so `close > max(high[:i+1])` can never fire.
+        That single index is the difference between a rule and a bug.
+        """
+        closes = [Decimal(100)] * 10 + [Decimal(150)] + [Decimal(150)] * 10
+        result = simulate_allocation(
+            window(closes),
+            DonchianChannel(entry_period=5, exit_period=3),
+            fee_per_side=NO_FEE,
+        )
+        # The breakout bar exists and is acted on, so some time is spent invested.
+        assert result.time_invested_percent > Decimal("0")
+
+    def test_it_latches_on_and_stays_until_a_breakdown(self) -> None:
+        """Unlike a moving average, it holds through a dip that does not break
+        the exit channel."""
+        closes = (
+            [Decimal(100)] * 10
+            + [Decimal(150)]
+            + [Decimal(148), Decimal(147), Decimal(149), Decimal(151)]
+        )
+        signals = DonchianChannel(entry_period=5, exit_period=3).signals(window(closes))
+        assert signals[-1] is True
+
+    def test_it_turns_off_when_the_exit_channel_breaks(self) -> None:
+        closes = [Decimal(100)] * 10 + [Decimal(150)] * 5 + [Decimal(80)]
+        signals = DonchianChannel(entry_period=5, exit_period=3).signals(window(closes))
+        assert signals[-1] is False
+
+    def test_a_period_below_two_is_refused(self) -> None:
+        with pytest.raises(AllocationError, match="at least 2"):
+            DonchianChannel(entry_period=1, exit_period=5)
+
+
+class TestDonchianEnsemble:
+    def test_it_needs_a_majority(self) -> None:
+        """One model firing is not a regime. That is the whole point of a vote."""
+        # A long decline, then a bounce big enough to clear the 5-bar high but
+        # nowhere near the 40-bar high. The fast model calls it a breakout.
+        decline = [Decimal(200) * (Decimal("0.99") ** index) for index in range(60)]
+        chart = window([*decline, *([decline[-1] * Decimal("1.10")] * 3)])
+
+        fast = DonchianChannel(5, 3).signals(chart)
+        ensemble = DonchianEnsemble(
+            channels=(DonchianChannel(5, 3), DonchianChannel(20, 10), DonchianChannel(40, 20)),
+            votes_required=2,
+        ).signals(chart)
+
+        assert fast[-1] is True
+        assert ensemble[-1] is False
+
+    def test_an_impossible_vote_threshold_is_refused(self) -> None:
+        with pytest.raises(AllocationError, match="between 1 and"):
+            DonchianEnsemble(channels=(DonchianChannel(5, 3),), votes_required=2)
+
+    def test_an_empty_ensemble_is_refused(self) -> None:
+        with pytest.raises(AllocationError, match="at least one channel"):
+            DonchianEnsemble(channels=())
 
 
 class TestComparison:

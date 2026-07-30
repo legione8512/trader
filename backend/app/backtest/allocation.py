@@ -93,6 +93,91 @@ class MovingAverageRegime:
 
 
 @dataclass(frozen=True, slots=True)
+class DonchianChannel:
+    """Hold after a breakout, until a breakdown. A latching rule.
+
+    Unlike a moving average, this one has memory: it turns on when the close
+    clears the highest high of the preceding ``entry_period`` bars, and stays on
+    until the close falls below the lowest low of the preceding ``exit_period``
+    bars. Between the two it holds regardless of what the price does.
+
+    **The comparison is against PRECEDING bars, never including the current
+    one.** ``close > max(high[i-N:i])`` is a breakout; ``close > max(high[i-N:i+1])``
+    is a tautology dressed as one, since the current bar's high is at least its
+    close. That single index is the difference between a rule and a bug.
+    """
+
+    entry_period: int = 20
+    exit_period: int = 10
+
+    def __post_init__(self) -> None:
+        if self.entry_period < 2 or self.exit_period < 2:
+            raise AllocationError("Donchian periods must be at least 2")
+
+    @property
+    def name(self) -> str:
+        return f"DC {self.entry_period}/{self.exit_period}"
+
+    @property
+    def warmup_bars(self) -> int:
+        return max(self.entry_period, self.exit_period)
+
+    def signals(self, window: CandleWindow) -> Sequence[bool | None]:
+        highs, lows, closes = window.highs, window.lows, window.closes
+        result: list[bool | None] = [None] * len(closes)
+        holding = False
+        for index in range(self.warmup_bars, len(closes)):
+            upper = max(highs[index - self.entry_period : index])
+            lower = min(lows[index - self.exit_period : index])
+            if not holding and closes[index] > upper:
+                holding = True
+            elif holding and closes[index] < lower:
+                holding = False
+            result[index] = holding
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class DonchianEnsemble:
+    """Hold when enough of several Donchian models agree.
+
+    The point of the ensemble is that no single pair of periods has to be
+    right. A rule that depends on choosing 20 rather than 40 is a rule whose
+    result is partly the choice; requiring a majority across three timescales
+    makes the answer less a function of that choice - which is exactly the
+    failure mode measured on the single-crossover strategies.
+    """
+
+    channels: tuple[DonchianChannel, ...]
+    votes_required: int = 2
+
+    def __post_init__(self) -> None:
+        if not self.channels:
+            raise AllocationError("An ensemble needs at least one channel")
+        if not (1 <= self.votes_required <= len(self.channels)):
+            raise AllocationError(f"votes_required must be between 1 and {len(self.channels)}")
+
+    @property
+    def name(self) -> str:
+        periods = "/".join(str(channel.entry_period) for channel in self.channels)
+        return f"DC ens {periods} ({self.votes_required}of{len(self.channels)})"
+
+    @property
+    def warmup_bars(self) -> int:
+        return max(channel.warmup_bars for channel in self.channels)
+
+    def signals(self, window: CandleWindow) -> Sequence[bool | None]:
+        votes = [channel.signals(window) for channel in self.channels]
+        warmup = self.warmup_bars
+        return [
+            None
+            if index < warmup
+            else sum(1 for vote in votes if vote[index]) >= self.votes_required
+            for index in range(len(window))
+        ]
+
+
+@dataclass(frozen=True, slots=True)
 class AllocationResult:
     """What a rule did, with the benchmark it must be judged against."""
 
