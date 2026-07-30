@@ -4,6 +4,7 @@ Usage:
 
     python -m app.cli seed
     python -m app.cli show-config
+    python -m app.cli backfill --days 730
 """
 
 from __future__ import annotations
@@ -11,12 +12,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, get_logger, register_configured_secrets
+from app.domain.enums import Timeframe
+from app.exchanges.binance.market_data import BinanceMarketDataAdapter
+from app.exchanges.binance.rest import BinanceRestClient
+from app.market_data.history import HistoryDownloader
+from app.persistence.candles import CandleRepository
 from app.persistence.database import build_engine, build_session_factory
-from app.persistence.repositories import ConfigurationRepository
-from app.persistence.seed import seed
+from app.persistence.repositories import ConfigurationRepository, ExchangeRepository
+from app.persistence.seed import BINANCE_CODE, seed
 
 logger = get_logger(__name__)
 
@@ -80,11 +87,105 @@ async def _show_config() -> int:
     return 0
 
 
+async def _backfill(days: int, timeframe: Timeframe, symbols: list[str] | None) -> int:
+    """Download historical candles.
+
+    Public market data, so no credentials are involved and none are read. That
+    is worth being explicit about: a long download is exactly the job someone
+    would be tempted to run with keys attached.
+    """
+    settings = get_settings()
+    engine = build_engine(settings)
+    session_factory = build_session_factory(engine)
+    client = BinanceRestClient()
+    try:
+        async with session_factory() as session:
+            exchange = await ExchangeRepository(session).get_by_code(BINANCE_CODE)
+            if exchange is None:
+                logger.error("no_exchange_row", hint="Run: python -m app.cli seed")
+                return 1
+
+            pairs = await ExchangeRepository(session).list_enabled_pairs(exchange.id)
+            wanted = {symbol.upper() for symbol in symbols} if symbols else None
+            selected = [
+                (pair.symbol, pair.id)
+                for pair in pairs
+                if wanted is None or pair.symbol.upper() in wanted
+            ]
+            if not selected:
+                # Pairs are disabled by default; enabling one is an operator
+                # decision, so an empty list means a decision was not taken
+                # rather than that something is broken.
+                logger.error(
+                    "no_pairs_selected",
+                    hint="No enabled trading pair matched. Enable a pair first.",
+                    requested=symbols,
+                )
+                return 1
+
+            downloader = HistoryDownloader(
+                BinanceMarketDataAdapter(client), CandleRepository(session)
+            )
+            report = await downloader.download(
+                pairs=selected,
+                timeframe=timeframe,
+                start=datetime.now(UTC) - timedelta(days=days),
+            )
+            await session.commit()
+
+        for entry in report.symbols:
+            logger.info(
+                "backfill_symbol",
+                symbol=entry.symbol,
+                inserted=entry.candles_inserted,
+                already_present=entry.candles_already_present,
+                stored_total=entry.stored_total,
+                stored_from=entry.stored_from.isoformat() if entry.stored_from else None,
+                stored_to=entry.stored_to.isoformat() if entry.stored_to else None,
+                gaps=len(entry.gaps),
+                complete=entry.is_complete,
+            )
+        if report.aborted_reason is not None:
+            logger.error("backfill_aborted", reason=report.aborted_reason)
+            return 1
+        if not report.is_usable_for_backtesting:
+            # Not a failure of the download. A hole the exchange does not have
+            # is a fact about the data, and a backtest over it must know.
+            logger.warning(
+                "backfill_incomplete",
+                detail="Stored history has gaps. Backtests over it will be refused.",
+            )
+        logger.info("backfill_completed", total_inserted=report.total_inserted)
+    finally:
+        await client.aclose()
+        await engine.dispose()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Trader maintenance commands")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("seed", help="Create initial reference data and configuration")
     subparsers.add_parser("show-config", help="Print the active configuration")
+
+    backfill = subparsers.add_parser(
+        "backfill", help="Download historical candles (public data, no credentials)"
+    )
+    backfill.add_argument(
+        "--days", type=int, default=730, help="How far back to download (default: 730)"
+    )
+    backfill.add_argument(
+        "--timeframe",
+        default=Timeframe.M15.value,
+        choices=[frame.value for frame in Timeframe],
+        help="Candle interval (default: 15m)",
+    )
+    backfill.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Limit to one symbol; repeat for several. Default: every enabled pair.",
+    )
 
     arguments = parser.parse_args(argv)
 
@@ -96,6 +197,12 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_seed())
     if arguments.command == "show-config":
         return asyncio.run(_show_config())
+    if arguments.command == "backfill":
+        if arguments.days < 1:
+            parser.error("--days must be at least 1")
+        return asyncio.run(
+            _backfill(arguments.days, Timeframe(arguments.timeframe), arguments.symbols)
+        )
 
     # argparse's `required=True` on the subparsers makes any other value
     # unreachable; parser.error never returns.
