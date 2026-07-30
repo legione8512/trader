@@ -167,8 +167,13 @@ cd backend && .venv/Scripts/python.exe -m uvicorn app.main:create_app --factory 
 
 ### 6. Checks
 
-Integration tests need a real PostgreSQL. They create and migrate their own
-`trader_test` database, so they never touch your development data.
+Integration tests need a real PostgreSQL. They derive their connection from
+your `DATABASE_URL`, append `_test` to the database name, then create and
+migrate that database themselves — so they use your credentials without you
+configuring anything, and never touch your development data. A guard refuses to
+run if the target database name does not end in `_test`.
+
+Set `TEST_DATABASE_URL` only to point somewhere else; CI does exactly that.
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest

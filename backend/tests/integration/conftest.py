@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -28,14 +29,50 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from app.config.settings import Settings
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-#: Overridable so CI and a developer machine can point somewhere different.
-DEFAULT_TEST_DATABASE_URL = "postgresql+asyncpg://trader:trader@localhost:5432/trader_test"
+#: Suffix appended to the application database name to obtain the test one.
+TEST_DATABASE_SUFFIX = "_test"
 
 
+def with_database_name(url: str, name: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{name}", parts.query, parts.fragment))
+
+
+@lru_cache(maxsize=1)
 def resolve_test_database_url() -> str:
-    return os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
+    """Where the integration tests run.
+
+    Precedence:
+
+    1. ``TEST_DATABASE_URL`` - used by CI, which has its own PostgreSQL service
+       and no ``.env`` file.
+    2. Derived from the application's own ``DATABASE_URL``, with ``_test``
+       appended to the database name.
+
+    Deriving rather than hard-coding matters: the credentials in ``.env`` are
+    chosen per machine, and a hard-coded default silently stops matching them.
+    """
+    override = os.environ.get("TEST_DATABASE_URL")
+    if override:
+        url = override
+    else:
+        application_url = Settings().database_url
+        application_name = urlsplit(application_url).path.lstrip("/")
+        url = with_database_name(application_url, f"{application_name}{TEST_DATABASE_SUFFIX}")
+
+    name = urlsplit(url).path.lstrip("/")
+    if not name.endswith(TEST_DATABASE_SUFFIX):
+        # Integration tests run migrations against this database. Pointing them
+        # at the development or production database would rewrite its schema.
+        raise RuntimeError(
+            f"Refusing to run integration tests against database {name!r}: "
+            f"the name must end with {TEST_DATABASE_SUFFIX!r}."
+        )
+    return url
 
 
 def maintenance_url(url: str) -> str:
@@ -43,8 +80,7 @@ def maintenance_url(url: str) -> str:
 
     Creating a database cannot be done from inside that database.
     """
-    parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, "/postgres", parts.query, parts.fragment))
+    return with_database_name(url, "postgres")
 
 
 async def ensure_database_exists(url: str) -> None:
