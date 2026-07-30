@@ -29,6 +29,29 @@ CALCULATION_PRECISION: Final = 60
 #: Two decimal places, the granularity of RON reporting.
 CENT: Final = Decimal("0.01")
 
+#: Decimal places a price is stored with. MUST match the scale of ``price()`` in
+#: app/persistence/types.py, and a test asserts that it does.
+#:
+#: It exists in the domain because a value that cannot be stored as computed is
+#: a value the audit trail will disagree with: whatever a decision emits beyond
+#: this is silently dropped on the way to the database, and the record would no
+#: longer be the decision.
+PRICE_PLACES: Final = 12
+PRICE_QUANTUM: Final = Decimal(1).scaleb(-PRICE_PLACES)
+
+
+def quantize_price(value: Decimal) -> Decimal:
+    """Round a price to the precision the system can actually persist.
+
+    ``ROUND_HALF_UP``: this is a presentation-level rounding of a value that is
+    already far more precise than any exchange tick, so no directional bias is
+    introduced. Rounding that must be directional - a quantity down to the lot
+    size, a stop away from the entry - happens later, against the exchange's
+    own filters, and is not this.
+    """
+    return value.quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+
+
 _CURRENCY_CODE_PATTERN: Final = re.compile(r"^[A-Z0-9]{2,10}$")
 
 DecimalLike = Decimal | int | str

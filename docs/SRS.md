@@ -409,7 +409,20 @@ of 1.8 may have a net R:R of 1.4.
 | OD-12 | Redis | Absent in Phases 1-2; added only on a real need |
 | OD-13 | Charting library | lightweight-charts — re-confirmed in Phase 9 |
 | OD-14 | Dashboard auth | Single operator, password + role, RBAC ready for dangerous actions |
+| OD-15 | Direction | **Long only.** Spot without margin cannot sell what it does not hold, and margin and futures permissions are forbidden. A downtrend therefore produces no trades at all. Confirmed in Phase 4.3 |
+| OD-16 | Fee payment | **In BNB**, for the documented 25% discount: 0.100% → 0.075% per side, 0.150% round trip. Requires holding BNB, which carries its own price risk. Confirmed in Phase 4.3 |
+| OD-17 | Reward-to-risk target | **2.5**, set by fee arithmetic rather than preference: at a 1% stop the round trip costs 0.20R, which is exactly the gross edge of a 2.0 target at a 40% win rate. Confirmed in Phase 4.3 |
 | R-25 | Daily fee budget | **Rejected** by the operator in Phase 0 |
+
+### Phase 4.3 findings on the locked risk parameters
+
+Recorded because they change what the configuration means, not what it says.
+
+| Finding | Consequence |
+|---------|-------------|
+| R-06 (3 consecutive losses) is reached before R-03 (−40 RON) in essentially every simulated day | The effective worst day is about **−15 RON**, not −40. The system is more conservative than the configuration reads |
+| Notional cannot exceed capital without leverage | The stop can never be tighter than `maximumRiskPerTradePercent / referenceCapital` = **0.5% of price** |
+| Expected return, after fees and assuming 3.4–4.8 signals are available every day | **0.4% to 1.4% per day** across plausible win rates and reward multiples. The 2% session target sits **above** what these parameters can sustain on average. It remains a session target, not a forecast |
 
 ---
 

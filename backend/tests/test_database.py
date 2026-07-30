@@ -76,6 +76,18 @@ class TestDatabaseHealthCheck:
             await ping(build_engine(settings))
 
 
+class TestPricePrecision:
+    def test_the_domain_price_precision_matches_the_column(self) -> None:
+        """PRICE_PLACES exists so a decision can be emitted at a precision the
+        database can hold. If the column ever changes scale and this does not,
+        proposals would again be stored as different numbers than they were.
+        """
+        from app.domain.money import PRICE_PLACES
+        from app.persistence.types import PRICE_SCALE
+
+        assert PRICE_PLACES == PRICE_SCALE
+
+
 class TestNamingConvention:
     def test_metadata_uses_the_explicit_convention(self) -> None:
         """Constraint names must be a pure function of the model."""

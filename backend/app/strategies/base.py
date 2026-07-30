@@ -36,12 +36,13 @@ import hashlib
 import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Any, Protocol, runtime_checkable
 
 from app.domain.candle_window import CandleWindow
 from app.domain.enums import OrderSide, Timeframe
 from app.domain.errors import DomainError
+from app.domain.money import CALCULATION_PRECISION, quantize_price
 
 
 class StrategyError(DomainError):
@@ -107,6 +108,18 @@ class SignalProposal:
     candle_open_time: datetime | None = None
 
     def __post_init__(self) -> None:
+        # Normalised to the precision the system can persist, BEFORE validation.
+        #
+        # A proposal carrying more digits than the column holds would be stored
+        # as a different number from the one the strategy decided on, and the
+        # audit trail would no longer be the decision. Validating afterwards
+        # matters too: rounding can in principle collapse a stop onto the entry,
+        # and that must be caught rather than stored.
+        object.__setattr__(self, "reference_price", quantize_price(self.reference_price))
+        object.__setattr__(self, "stop_loss_price", quantize_price(self.stop_loss_price))
+        if self.take_profit_price is not None:
+            object.__setattr__(self, "take_profit_price", quantize_price(self.take_profit_price))
+
         if self.reference_price <= 0:
             raise StrategyError(f"Reference price must be positive: {self.reference_price}")
         if self.stop_loss_price <= 0:
@@ -154,13 +167,23 @@ class SignalProposal:
 
         Gross, and named so. The ratio that decides anything (rule R-14) is net
         of estimated fees and slippage, and only the risk engine knows those.
+
+        **Not exactly the strategy's configured multiple, and it should not be.**
+        The prices are normalised to storage precision, so a target built as
+        ``entry + 2.5 * distance`` comes back as 2.49999999999... once re-derived.
+        That is the ratio the position will actually have, and it is the honest
+        number to judge. Any rule comparing it against a threshold must allow
+        for it rather than expect equality - and it will move further once
+        execution rounds to the exchange tick.
         """
         if self.take_profit_price is None:
             return None
         distance = self.stop_distance
         if distance == 0:
             return None
-        return abs(self.take_profit_price - self.reference_price) / distance
+        with localcontext() as arithmetic:
+            arithmetic.prec = CALCULATION_PRECISION
+            return abs(self.take_profit_price - self.reference_price) / distance
 
     def __repr__(self) -> str:
         return (
