@@ -198,6 +198,39 @@ class TimeInForce(StrEnum):
     FOK = "FOK"
 
 
+class OrderPurpose(StrEnum):
+    """Why an order exists.
+
+    The distinction is not cosmetic: only an ``ENTRY`` requires a risk approval,
+    and a halted day must still be able to submit the exit orders that protect
+    an open position.
+    """
+
+    ENTRY = "ENTRY"
+    STOP_LOSS = "STOP_LOSS"
+    TAKE_PROFIT = "TAKE_PROFIT"
+    MANUAL_EXIT = "MANUAL_EXIT"
+    SESSION_CLOSE = "SESSION_CLOSE"
+    RECONCILIATION_CLOSE = "RECONCILIATION_CLOSE"
+
+    @property
+    def opens_exposure(self) -> bool:
+        """Whether this order increases exposure and therefore needs approval."""
+        return self is OrderPurpose.ENTRY
+
+
+class ExitReason(StrEnum):
+    """Why a position was closed. Every trade must state one."""
+
+    STOP_LOSS = "STOP_LOSS"
+    TAKE_PROFIT = "TAKE_PROFIT"
+    MANUAL = "MANUAL"
+    SESSION_CLOSE = "SESSION_CLOSE"
+    DAY_STOP = "DAY_STOP"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
+    RECONCILIATION = "RECONCILIATION"
+
+
 class ExecutionVenue(StrEnum):
     """Where an order was actually executed.
 

@@ -19,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.enums import (
     AuditActor,
     EventSeverity,
+    ExecutionVenue,
     HealthStatus,
+    OrderStatus,
+    PositionStatus,
     RiskVerdict,
     SignalStatus,
     TradingDayStatus,
@@ -28,14 +31,20 @@ from app.domain.enums import (
 from app.persistence.mixins import utc_now
 from app.persistence.models import (
     AuditEvent,
+    BalanceSnapshot,
     Exchange,
     FxRateSnapshot,
+    Order,
+    OrderFill,
+    PnLSnapshot,
+    Position,
     RiskAssessment,
     RiskConfiguration,
     Signal,
     Strategy,
     StrategyVersion,
     SystemEvent,
+    Trade,
     TradingConfiguration,
     TradingDay,
     TradingPair,
@@ -409,6 +418,169 @@ class RiskAssessmentRepository:
             statement = statement.where(RiskAssessment.evaluated_at >= since)
         result = await self._session.execute(statement.order_by(RiskAssessment.evaluated_at))
         return result.scalars().all()
+
+
+class OrderRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, order: Order) -> Order:
+        self._session.add(order)
+        await self._session.flush()
+        return order
+
+    async def get_by_client_order_id(self, client_order_id: str) -> Order | None:
+        """Look an order up by the id WE generated.
+
+        This is the reconciliation entry point: after a timeout the exchange is
+        asked about this id, never sent a second order.
+        """
+        result = await self._session.execute(
+            select(Order).where(Order.client_order_id == client_order_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_needing_reconciliation(self) -> Sequence[Order]:
+        """Orders whose real state is unknown.
+
+        Until this list is empty, the safe default is to stop opening new
+        positions: the application does not know its own exposure.
+        """
+        result = await self._session.execute(
+            select(Order)
+            .where(Order.status.in_([OrderStatus.UNKNOWN, OrderStatus.RECONCILING]))
+            .order_by(Order.intent_recorded_at)
+        )
+        return result.scalars().all()
+
+    async def list_open_on_exchange(self, venue: ExecutionVenue) -> Sequence[Order]:
+        result = await self._session.execute(
+            select(Order)
+            .where(
+                Order.venue == venue,
+                Order.status.in_([OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED]),
+            )
+            .order_by(Order.intent_recorded_at)
+        )
+        return result.scalars().all()
+
+    async def add_fill(self, fill: OrderFill) -> OrderFill:
+        self._session.add(fill)
+        await self._session.flush()
+        return fill
+
+
+class PositionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, position: Position) -> Position:
+        self._session.add(position)
+        await self._session.flush()
+        return position
+
+    async def list_occupying_slots(self, venue: ExecutionVenue) -> Sequence[Position]:
+        """Positions that count against ``maximumOpenPositions`` (R-04).
+
+        OPENING, OPEN, CLOSING and DESYNCED all occupy a slot. A position being
+        closed has not released it yet, and a desynced one occupies it by
+        definition: its real size is unknown.
+        """
+        occupying = [status for status in PositionStatus if status.occupies_a_position_slot]
+        result = await self._session.execute(
+            select(Position)
+            .where(Position.venue == venue, Position.status.in_(occupying))
+            .order_by(Position.opened_at)
+        )
+        return result.scalars().all()
+
+    async def count_occupying_slots(self, venue: ExecutionVenue) -> int:
+        return len(await self.list_occupying_slots(venue))
+
+    async def list_desynced(self) -> Sequence[Position]:
+        result = await self._session.execute(
+            select(Position).where(Position.status == PositionStatus.DESYNCED)
+        )
+        return result.scalars().all()
+
+
+class TradeRepository:
+    """Append-only ledger."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, trade: Trade) -> Trade:
+        self._session.add(trade)
+        await self._session.flush()
+        return trade
+
+    async def list_closed_on_day(self, trading_day_id: uuid.UUID) -> Sequence[Trade]:
+        """Trades whose realised P&L belongs to this day (OD-04)."""
+        result = await self._session.execute(
+            select(Trade)
+            .where(Trade.closed_trading_day_id == trading_day_id)
+            .order_by(Trade.closed_at)
+        )
+        return result.scalars().all()
+
+    async def list_opened_on_day(self, trading_day_id: uuid.UUID) -> Sequence[Trade]:
+        """Trades that count against this day's trade limit (R-05, OD-04)."""
+        result = await self._session.execute(
+            select(Trade)
+            .where(Trade.opened_trading_day_id == trading_day_id)
+            .order_by(Trade.opened_at)
+        )
+        return result.scalars().all()
+
+    async def count_consecutive_losses(self, venue: ExecutionVenue) -> int:
+        """Losses since the last win, most recent first (R-06).
+
+        Counted across the whole ledger rather than per day: a losing streak
+        does not reset because the clock passed midnight.
+        """
+        result = await self._session.execute(
+            select(Trade).where(Trade.venue == venue).order_by(Trade.closed_at.desc()).limit(50)
+        )
+        streak = 0
+        for trade in result.scalars().all():
+            if trade.is_win:
+                break
+            streak += 1
+        return streak
+
+
+class SnapshotRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_balance(self, snapshot: BalanceSnapshot) -> BalanceSnapshot:
+        self._session.add(snapshot)
+        await self._session.flush()
+        return snapshot
+
+    async def latest_balance(self, venue: ExecutionVenue, asset: str) -> BalanceSnapshot | None:
+        result = await self._session.execute(
+            select(BalanceSnapshot)
+            .where(BalanceSnapshot.venue == venue, BalanceSnapshot.asset == asset)
+            .order_by(BalanceSnapshot.taken_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def add_pnl(self, snapshot: PnLSnapshot) -> PnLSnapshot:
+        self._session.add(snapshot)
+        await self._session.flush()
+        return snapshot
+
+    async def latest_pnl(self, trading_day_id: uuid.UUID) -> PnLSnapshot | None:
+        result = await self._session.execute(
+            select(PnLSnapshot)
+            .where(PnLSnapshot.trading_day_id == trading_day_id)
+            .order_by(PnLSnapshot.taken_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 class AuditRepository:
