@@ -183,6 +183,76 @@ def simulate_exit(
     return ExitFill(ExitTrigger.END_OF_DATA, last, bars[last].close)
 
 
+def simulate_trailing_exit(
+    bars: Sequence[Bar],
+    *,
+    entry_index: int,
+    entry_price: Decimal,
+    side: OrderSide,
+    initial_stop_price: Decimal,
+    take_profit_price: Decimal | None,
+    atr_at_entry: Decimal,
+    activation_atr: Decimal,
+    trailing_atr: Decimal,
+    max_bars: int | None = None,
+) -> ExitFill:
+    """Walk forward with a stop that ratchets in our favour.
+
+    **The trailing level is updated only AFTER a bar has been judged.** A stop
+    raised using the same bar's high, and then tested against that bar's low,
+    would be a stop placed with knowledge of where the bar went - the tightest
+    possible form of look-ahead bias, and one that makes a trailing system look
+    close to unbeatable. The level established at the close of bar i applies
+    from bar i+1 onwards.
+
+    ATR is taken at entry and held fixed. Recomputing it each bar would widen
+    the trail exactly when volatility spiked, which is the moment a trailing
+    stop exists to protect against.
+    """
+    if atr_at_entry <= ZERO:
+        raise FillModelError("A trailing stop needs a positive ATR")
+
+    last = len(bars) - 1
+    if max_bars is not None:
+        last = min(last, entry_index + max_bars - 1)
+
+    is_long = side is OrderSide.BUY
+    stop = initial_stop_price
+    best_close = entry_price
+    activation = activation_atr * atr_at_entry
+    trail = trailing_atr * atr_at_entry
+
+    for index in range(entry_index, last + 1):
+        bar = bars[index]
+        hit_stop, stop_price, stop_gapped = _stop_hit(bar, side, stop)
+        hit_target, target_price, target_gapped = (
+            _target_hit(bar, side, take_profit_price)
+            if take_profit_price is not None
+            else (False, ZERO, False)
+        )
+
+        if hit_stop and hit_target:
+            return ExitFill(
+                ExitTrigger.STOP_LOSS, index, stop_price, gapped=stop_gapped, ambiguous=True
+            )
+        if hit_stop:
+            return ExitFill(ExitTrigger.STOP_LOSS, index, stop_price, gapped=stop_gapped)
+        if hit_target:
+            return ExitFill(ExitTrigger.TAKE_PROFIT, index, target_price, gapped=target_gapped)
+
+        # Only now, with the bar fully judged, may the level move.
+        if is_long:
+            best_close = max(best_close, bar.close)
+            if best_close - entry_price >= activation:
+                stop = max(stop, best_close - trail)
+        else:
+            best_close = min(best_close, bar.close)
+            if entry_price - best_close >= activation:
+                stop = min(stop, best_close + trail)
+
+    return ExitFill(ExitTrigger.END_OF_DATA, last, bars[last].close)
+
+
 def _stop_hit(bar: Bar, side: OrderSide, stop: Decimal) -> tuple[bool, Decimal, bool]:
     if side is OrderSide.BUY:
         if bar.open <= stop:

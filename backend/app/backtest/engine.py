@@ -34,6 +34,7 @@ from app.backtest.fills import (
     FillAssumptions,
     simulate_exit,
     simulate_limit_entry,
+    simulate_trailing_exit,
 )
 from app.domain.candle_window import CandleWindow
 from app.domain.enums import OrderSide, RiskReasonCode, Timeframe
@@ -290,14 +291,34 @@ def _attempt(
         result.entries_expired_unfilled += 1
         return None
 
-    exit_fill = simulate_exit(
-        bars,
-        entry_index=entry.bar_index,
-        side=proposal.side,
-        stop_loss_price=sizing.stop_loss_price,
-        take_profit_price=sizing.take_profit_price,
-        max_bars=config.max_bars_in_trade,
-    )
+    # A strategy that wants a trailing exit says so by publishing the levels it
+    # computed at entry. Read rather than recomputed here: recomputing would
+    # create a second implementation that can disagree with the one the decision
+    # was taken on.
+    trailing = _trailing_settings(proposal)
+    if trailing is not None:
+        atr, activation, distance = trailing
+        exit_fill = simulate_trailing_exit(
+            bars,
+            entry_index=entry.bar_index,
+            entry_price=entry.price,
+            side=proposal.side,
+            initial_stop_price=sizing.stop_loss_price,
+            take_profit_price=sizing.take_profit_price,
+            atr_at_entry=atr,
+            activation_atr=activation / atr,
+            trailing_atr=distance / atr,
+            max_bars=config.max_bars_in_trade,
+        )
+    else:
+        exit_fill = simulate_exit(
+            bars,
+            entry_index=entry.bar_index,
+            side=proposal.side,
+            stop_loss_price=sizing.stop_loss_price,
+            take_profit_price=sizing.take_profit_price,
+            max_bars=config.max_bars_in_trade,
+        )
     return _settle(proposal, sizing, entry.bar_index, entry.price, exit_fill, index, bars, config)
 
 
@@ -348,6 +369,23 @@ def _context(
             # Zero: the proposal is judged on the candle that produced it.
             signal_age=timedelta(0),
         ),
+    )
+
+
+def _trailing_settings(
+    proposal: SignalProposal,
+) -> tuple[Decimal, Decimal, Decimal] | None:
+    """The trailing levels a strategy published, or ``None`` for a fixed exit."""
+    required = ("atr_at_entry", "trailing_activation", "trailing_atr")
+    if not all(key in proposal.inputs for key in required):
+        return None
+    atr = Decimal(str(proposal.inputs["atr_at_entry"]))
+    if atr <= ZERO:
+        return None
+    return (
+        atr,
+        Decimal(str(proposal.inputs["trailing_activation"])),
+        Decimal(str(proposal.inputs["trailing_atr"])),
     )
 
 

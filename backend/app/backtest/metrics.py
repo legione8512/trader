@@ -26,7 +26,9 @@ from decimal import Decimal, localcontext
 from enum import StrEnum
 
 from app.backtest.engine import BacktestResult, BacktestTrade
+from app.domain.candle_window import CandleWindow
 from app.domain.money import CALCULATION_PRECISION
+from app.domain.risk.economics import TradingCosts
 
 ZERO = Decimal(0)
 ONE = Decimal(1)
@@ -239,6 +241,89 @@ class BacktestMetrics:
                 f"{self.gapped_exits} gapped and {self.ambiguous_exits} ambiguous exits."
             )
         return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class BuyAndHold:
+    """What doing nothing would have returned over the same period.
+
+    **The benchmark that was missing.** A long-only strategy on a rising asset
+    must be compared against holding that asset, not against zero. Comparing
+    against zero lets a system that underperforms inaction look like a success,
+    and every hour spent operating it is then a loss nobody measured.
+    """
+
+    entry_price: Decimal
+    exit_price: Decimal
+    return_percent: Decimal
+    max_drawdown_percent: Decimal
+
+    @property
+    def return_per_unit_of_drawdown(self) -> Decimal | None:
+        """The comparison that survives different position sizes."""
+        if self.max_drawdown_percent <= ZERO:
+            return None
+        return (self.return_percent / self.max_drawdown_percent).quantize(FOUR_PLACES)
+
+
+def buy_and_hold(window: CandleWindow, costs: TradingCosts | None = None) -> BuyAndHold:
+    """Buy at the first close, hold to the last, charged one round trip."""
+    if window.is_empty:
+        return BuyAndHold(ZERO, ZERO, ZERO, ZERO)
+
+    with localcontext() as arithmetic:
+        arithmetic.prec = CALCULATION_PRECISION
+        entry = window.closes[0]
+        exit_price = window.closes[-1]
+        fee = costs.round_trip_fraction if costs is not None else ZERO
+        gross = (exit_price - entry) / entry
+        net = gross - fee
+
+        peak = entry
+        worst = ZERO
+        for low, close in zip(window.lows, window.closes, strict=True):
+            peak = max(peak, close)
+            worst = min(worst, (low - peak) / peak)
+
+        return BuyAndHold(
+            entry_price=entry,
+            exit_price=exit_price,
+            return_percent=(net * HUNDRED).quantize(FOUR_PLACES),
+            max_drawdown_percent=(-worst * HUNDRED).quantize(FOUR_PLACES),
+        )
+
+
+def compare_to_buy_and_hold(
+    metrics: BacktestMetrics, benchmark: BuyAndHold
+) -> tuple[Decimal | None, str]:
+    """Strategy return at the position size that matches the benchmark's risk.
+
+    Comparing a strategy's R total against a percentage return is comparing two
+    different units. Sizing the strategy so its worst drawdown equals the
+    benchmark's makes the two returns answer the same question: **for the same
+    pain, which gave more?**
+    """
+    if metrics.max_drawdown_r <= ZERO or benchmark.max_drawdown_percent <= ZERO:
+        return None, "Not comparable: one of the two never drew down."
+
+    with localcontext() as arithmetic:
+        arithmetic.prec = CALCULATION_PRECISION
+        scaled = (
+            metrics.total_r / metrics.max_drawdown_r * benchmark.max_drawdown_percent
+        ).quantize(FOUR_PLACES)
+
+    if scaled > benchmark.return_percent:
+        verdict = (
+            f"Strategy {scaled}% vs buy-and-hold {benchmark.return_percent}% at equal "
+            f"drawdown. The strategy is ahead - on this data, at this sample size."
+        )
+    else:
+        verdict = (
+            f"Strategy {scaled}% vs buy-and-hold {benchmark.return_percent}% at equal "
+            f"drawdown. BUY-AND-HOLD WINS: the strategy earns less for the same pain, "
+            f"and costs operational risk on top."
+        )
+    return scaled, verdict
 
 
 def compute_metrics(result: BacktestResult) -> BacktestMetrics:
