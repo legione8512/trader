@@ -45,11 +45,11 @@ back, produce no entry at all - that is the price of insisting on a discount.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, localcontext
 from typing import Any
 
-from app.domain.enums import OrderSide
+from app.domain.enums import OrderSide, Timeframe
 from app.domain.indicators import (
     average_true_range,
     exponential_moving_average,
@@ -165,6 +165,47 @@ class TrendPullbackParameters:
         "max_atr_fraction",
         "trend_strength_scale",
     )
+
+    @classmethod
+    def scaled_for(
+        cls,
+        timeframe: Timeframe,
+        base: Timeframe = Timeframe.M15,
+        **overrides: Any,
+    ) -> TrendPullbackParameters:
+        """The same design, with its volatility gates moved to another bar length.
+
+        Three of the thresholds here are fractions of price calibrated for a
+        specific bar. Volatility grows with the square root of time, so a gate
+        that admits a normal 15-minute candle rejects a normal hourly one, and
+        running the strategy unchanged on a longer timeframe would produce
+        refusals that say nothing about the strategy and everything about a
+        threshold left behind.
+
+        ``min_stop_fraction`` is deliberately NOT scaled. It is not a volatility
+        gate: it is the point below which the position notional would exceed the
+        reference capital, which needs leverage and is forbidden. That floor is
+        ``maximumRiskPerTradePercent / referenceCapital`` and is the same number
+        on every timeframe.
+
+        One transformation, from a known relationship, applied to every
+        volatility threshold at once. It is not a parameter search, and it is
+        chosen before any result is seen - which is the only thing that
+        distinguishes the two.
+        """
+        with localcontext() as arithmetic:
+            arithmetic.prec = CALCULATION_PRECISION
+            ratio = Decimal(timeframe.minutes) / Decimal(base.minutes)
+            factor = ratio.sqrt()
+
+        defaults = cls()
+        scaled: dict[str, Any] = {
+            "min_atr_fraction": defaults.min_atr_fraction * factor,
+            "max_atr_fraction": defaults.max_atr_fraction * factor,
+            "max_stop_fraction": defaults.max_stop_fraction * factor,
+        }
+        scaled.update(overrides)
+        return replace(defaults, **scaled)
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> TrendPullbackParameters:

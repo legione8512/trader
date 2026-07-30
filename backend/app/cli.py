@@ -35,7 +35,7 @@ from app.persistence.candles import CandleRepository
 from app.persistence.database import build_engine, build_session_factory
 from app.persistence.repositories import ConfigurationRepository, ExchangeRepository
 from app.persistence.seed import BINANCE_CODE, seed
-from app.strategies.trend_pullback import TrendPullbackStrategy
+from app.strategies.trend_pullback import TrendPullbackParameters, TrendPullbackStrategy
 
 logger = get_logger(__name__)
 
@@ -276,7 +276,20 @@ async def _backtest(symbol: str, timeframe: Timeframe, days: int) -> int:
                 end=end,
             )
 
-        strategy = TrendPullbackStrategy()
+        # Volatility gates moved to this bar length by the square-root-of-time
+        # relationship. See TrendPullbackParameters.scaled_for: one
+        # transformation, applied to every volatility threshold at once, chosen
+        # before any result is seen. The capital floor does not scale.
+        parameters = TrendPullbackParameters.scaled_for(timeframe)
+        strategy = TrendPullbackStrategy(parameters)
+        print(  # noqa: T201
+            f"Strategy: {strategy.name} on {timeframe.value}\n"
+            f"  min_atr_fraction:  {parameters.min_atr_fraction}\n"
+            f"  max_atr_fraction:  {parameters.max_atr_fraction}\n"
+            f"  max_stop_fraction: {parameters.max_stop_fraction}\n"
+            f"  min_stop_fraction: {parameters.min_stop_fraction} (capital floor, not scaled)\n"
+            f"  reward_risk_target: {parameters.reward_risk_target}\n"
+        )
         config = BacktestConfig(
             symbol=pair.symbol,
             timeframe=timeframe,
